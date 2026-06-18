@@ -38,6 +38,14 @@ def won(x):
     return f"₩{x:,.0f}"
 
 
+def won_short(n):
+    if n >= 1e8:
+        return f"₩{n/1e8:.1f}억"
+    if n >= 1e4:
+        return f"₩{round(n/1e4):,}만"
+    return f"₩{round(n):,}"
+
+
 def option_label(it):
     opts = it.get("options")
     if isinstance(opts, list) and opts:
@@ -260,21 +268,47 @@ def render_sales(orders):
     유입수 = int(adf["방문수"].sum()) if adf is not None else None
     전환율 = (adf["구매건수"].sum() / adf["방문수"].sum() * 100) if (adf is not None and adf["방문수"].sum()) else None
 
-    # 1) 상단 KPI 6개
-    c = st.columns(6)
-    c[0].metric("총 매출", won(conv_sales))
-    c[1].metric("전환수", f"{conv_count:,}건")
-    c[2].metric("평균 객단가", won(aov))
-    c[3].metric("유입수", f"{유입수:,}" if 유입수 is not None else "—")
-    c[4].metric("전환율", f"{전환율:.2f}%" if 전환율 is not None else "—")
-    c[5].metric("환불율", f"{(refund_amount/gross*100 if gross else 0):.1f}%")
+    # ----- 디자인 스타일 (화이트 카드 + 블루 포인트) -----
+    st.markdown("""<style>
+    .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:6px 0 18px;}
+    .kpi-card{background:#F4F6F9;border-radius:12px;padding:16px 18px;}
+    .kpi-label{font-size:13px;color:#6B7280;}
+    .kpi-tag{font-size:11px;color:#AAB0BC;}
+    .kpi-val{font-size:24px;font-weight:700;color:#1A2233;margin-top:4px;letter-spacing:-0.5px;}
+    .wcard{background:#fff;border:0.5px solid #E6E9EF;border-radius:12px;padding:20px;margin-bottom:18px;}
+    .ratio-bar{display:flex;height:16px;border-radius:4px;overflow:hidden;margin-bottom:18px;}
+    .ratio-stats{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+    .rs-label{font-size:13px;color:#6B7280;}
+    .rs-dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:middle;}
+    .rs-val{font-size:22px;font-weight:700;color:#1A2233;margin:4px 0;}
+    .rs-sub{font-size:13px;color:#6B7280;font-weight:400;}
+    </style>""", unsafe_allow_html=True)
+
+    refund_rate = (refund_amount / gross * 100) if gross else 0
+
+    # 1) 상단 KPI 6개 (카드)
+    cards = [
+        ("총 매출", won_short(conv_sales), ""),
+        ("전환수", f"{conv_count:,}건", ""),
+        ("평균 객단가", won(aov), ""),
+        ("유입수", f"{유입수:,}" if 유입수 is not None else "—", "· CSV"),
+        ("전환율", f"{전환율:.1f}%" if 전환율 is not None else "—", "· CSV"),
+        ("환불율", f"{refund_rate:.1f}%", ""),
+    ]
+    kpi_html = '<div class="kpi-grid">' + "".join(
+        f'<div class="kpi-card"><div class="kpi-label">{l} <span class="kpi-tag">{tag}</span></div>'
+        f'<div class="kpi-val">{v}</div></div>' for l, v, tag in cards) + '</div>'
+    st.markdown(kpi_html, unsafe_allow_html=True)
     if adf is None:
         st.caption("유입수·전환율은 위에서 방문자 CSV를 올리면 표시됩니다.")
 
-    # 2~3) 신규 vs 재구매 파이 + 직전 기간 대비 등락
-    st.subheader("신규 구매 vs 재구매 (매출)")
+    # 2~3) 신규 vs 재구매 비율 막대 + 직전 기간 등락
+    st.subheader("신규 구매 vs 재구매")
     new_sales = valid[valid["신규고객"]]["결제금액"].sum()
     repeat_sales = valid[~valid["신규고객"]]["결제금액"].sum()
+    tot = new_sales + repeat_sales
+    new_pct = round(new_sales / tot * 100) if tot else 0
+    rep_pct = 100 - new_pct
 
     L = (end_date - start_date).days + 1
     prev_end = start_date - timedelta(days=1)
@@ -291,25 +325,33 @@ def render_sales(orders):
     else:
         prev_new = prev_repeat = 0
 
-    def delta(cur, prev):
-        return f"{(cur/prev-1)*100:+.1f}%" if prev else None
+    def delta_num(cur, prev):
+        return (cur / prev - 1) * 100 if prev else None
 
-    col_pie, col_delta = st.columns([2, 1])
-    with col_pie:
-        f = px.pie(values=[new_sales, repeat_sales], names=["신규 구매", "재구매"], hole=0.55,
-                   color=["신규 구매", "재구매"],
-                   color_discrete_map={"신규 구매": "#378ADD", "재구매": "#1D9E75"})
-        f.update_traces(textinfo="percent+label", textfont_size=14)
-        f.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
-                        legend=dict(orientation="h", y=-0.1))
-        st.plotly_chart(f, use_container_width=True)
-    with col_delta:
-        st.metric("신규 구매", won(new_sales), delta(new_sales, prev_new))
-        st.metric("재구매", won(repeat_sales), delta(repeat_sales, prev_repeat))
-        st.caption(f"직전 {L}일({prev_start:%m/%d}~{prev_end:%m/%d}) 대비")
+    def delta_span(v):
+        if v is None:
+            return '<span style="color:#9AA0AC;font-weight:600;">— 비교불가</span>'
+        color = "#1D9E75" if v > 0 else ("#E5484D" if v < 0 else "#9AA0AC")
+        arrow = "▲" if v > 0 else ("▼" if v < 0 else "─")
+        return f'<span style="color:{color};font-weight:600;">{arrow} {abs(v):.1f}%</span>'
+
+    dn_new = delta_num(new_sales, prev_new)
+    dn_rep = delta_num(repeat_sales, prev_repeat)
+    st.markdown(f"""<div class="wcard">
+      <div class="ratio-bar"><div style="width:{new_pct}%;background:#378ADD;"></div><div style="width:{rep_pct}%;background:#B5D4F4;"></div></div>
+      <div class="ratio-stats">
+        <div><div class="rs-label"><span class="rs-dot" style="background:#378ADD;"></span>신규 구매</div>
+          <div class="rs-val">{won_short(new_sales)} <span class="rs-sub">{new_pct}%</span></div>
+          {delta_span(dn_new)} <span class="rs-sub">직전 {L}일 대비</span></div>
+        <div><div class="rs-label"><span class="rs-dot" style="background:#B5D4F4;"></span>재구매</div>
+          <div class="rs-val">{won_short(repeat_sales)} <span class="rs-sub">{rep_pct}%</span></div>
+          {delta_span(dn_rep)} <span class="rs-sub">직전 {L}일 대비</span></div>
+      </div>
+    </div>""", unsafe_allow_html=True)
 
     # 4) 일별 매출 추이 (신규/재구매 누적) + 메모
-    st.subheader("일별 매출 추이 (신규/재구매 누적)")
+    st.subheader("일별 매출 추이")
+    st.caption("신규·재구매를 쌓아 보여줍니다. 급변한 날은 메모로 기록해두세요.")
     daily = (valid.groupby([valid["날짜"].dt.date, "신규고객"])["결제금액"]
              .sum().unstack(fill_value=0))
     daily = daily.rename(columns={True: "신규구매", False: "재구매"}).sort_index()
@@ -320,47 +362,44 @@ def render_sales(orders):
     date_list = [str(d) for d in daily.index]
     memos = load_memos()
 
-    show_memo = st.toggle("그래프에 메모 표시", value=True)
     fig = go.Figure()
     fig.add_bar(x=date_list, y=daily["신규구매"], name="신규구매", marker_color="#378ADD")
-    fig.add_bar(x=date_list, y=daily["재구매"], name="재구매", marker_color="#1D9E75")
-    fig.update_layout(barmode="stack", height=380, margin=dict(t=30, b=10, l=10, r=10),
-                      legend=dict(orientation="h", y=1.1), yaxis_title="매출")
-    if show_memo:
-        for ds in date_list:
-            if ds in memos and memos[ds].strip():
-                fig.add_annotation(x=ds, y=float(total_series.loc[pd.to_datetime(ds).date()]),
-                                   text="📌 " + memos[ds], showarrow=True, arrowhead=2,
-                                   ax=0, ay=-40, bgcolor="#FFF7E6", bordercolor="#E0A800",
-                                   font=dict(size=11))
-    st.plotly_chart(fig, use_container_width=True)
+    fig.add_bar(x=date_list, y=daily["재구매"], name="재구매", marker_color="#B5D4F4")
+    fig.update_layout(barmode="stack", height=360, margin=dict(t=30, b=10, l=10, r=10),
+                      legend=dict(orientation="h", y=1.12, x=0),
+                      plot_bgcolor="white", yaxis=dict(gridcolor="#EEF1F5"))
+    for ds in date_list:
+        if ds in memos and memos[ds].strip():
+            fig.add_annotation(x=ds, y=float(total_series.loc[pd.to_datetime(ds).date()]),
+                               text="📌 " + memos[ds], showarrow=True, arrowhead=2,
+                               ax=0, ay=-40, bgcolor="#FFF7E6", bordercolor="#E0A800",
+                               font=dict(size=11))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # 메모 바로 입력
-    st.caption("그래프에 메모 추가 — 날짜를 고르고 내용을 적은 뒤 추가하세요.")
-    mc1, mc2, mc3 = st.columns([1, 3, 1])
-    md = mc1.selectbox("날짜", date_list, index=len(date_list) - 1, key="memo_date")
-    mt = mc2.text_input("메모 내용", value=memos.get(md, ""), key="memo_text")
-    if mc3.button("메모 추가/수정"):
+    # 그래프 바로 아래에서 메모 추가
+    mc1, mc2, mc3 = st.columns([1.2, 3, 0.8])
+    md = mc1.selectbox("날짜", date_list, index=len(date_list) - 1,
+                       key="memo_date", label_visibility="collapsed")
+    mt = mc2.text_input("메모", value="", key="memo_text",
+                        placeholder="이 날 무슨 일이 있었나요? (예: 라이브방송, 광고집행)",
+                        label_visibility="collapsed")
+    if mc3.button("메모 추가", use_container_width=True):
         if mt.strip():
             memos[md] = mt.strip()
-        else:
-            memos.pop(md, None)
-        save_memos(memos)
-        st.rerun()
+            save_memos(memos)
+            st.rerun()
 
-    # 메모 모아보기
-    with st.expander(f"🗂 메모 모아보기 ({len([m for m in memos.values() if m.strip()])}건)"):
-        active = {d: t for d, t in sorted(memos.items()) if t.strip()}
-        if active:
-            for d, t in active.items():
-                a1, a2 = st.columns([5, 1])
-                a1.write(f"**{d}** — {t}")
-                if a2.button("삭제", key=f"del_{d}"):
-                    memos.pop(d, None)
-                    save_memos(memos)
-                    st.rerun()
-        else:
-            st.caption("저장된 메모가 없어요.")
+    active = {d: t for d, t in sorted(memos.items()) if t.strip()}
+    if active:
+        for d, t in active.items():
+            a1, a2 = st.columns([6, 1])
+            a1.markdown(f"📌 **{d}** — {t}")
+            if a2.button("삭제", key=f"del_{d}", use_container_width=True):
+                memos.pop(d, None)
+                save_memos(memos)
+                st.rerun()
+    else:
+        st.caption("아직 기록된 메모가 없어요. 위에서 날짜를 고르고 메모를 추가해보세요.")
 
     # 유입 · 전환 상세 (상단에서 올린 CSV 재사용)
     st.divider()
@@ -429,7 +468,7 @@ def render_product(orders):
                                              "미분류": "#888780"})
         fig.update_layout(height=400, margin=dict(t=10, b=10, l=10, r=10),
                           legend=dict(orientation="h", y=-0.18))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
         med_v, med_c = pdf["조회수"].median(), pdf["전환율"].median()
         st.caption(f"전환 개선 후보 (조회>{med_v:,.0f} & 전환율<{med_c:.2f}%)")
@@ -484,7 +523,7 @@ def render_product(orders):
             f.update_traces(textinfo="percent+label")
             f.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
                             legend=dict(orientation="h", y=-0.1))
-            st.plotly_chart(f, use_container_width=True)
+            st.plotly_chart(f, use_container_width=True, config={"displayModeBar": False})
         with cc2:
             st.dataframe(big.style.format({"매출": "₩{:,.0f}", "수량": "{:,}"}),
                          use_container_width=True)
