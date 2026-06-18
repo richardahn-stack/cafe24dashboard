@@ -154,6 +154,14 @@ def save_memos(m):
 
 
 # ====================== 데이터 로더 (캐시) ======================
+@st.cache_data(ttl=300)
+def load_data_json(name):
+    """data/ 폴더의 JSON을 읽음 (GitHub Actions가 매일 생성)."""
+    path = os.path.join("data", name)
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 @st.cache_data(ttl=600, show_spinner="카페24에서 주문 데이터를 가져오는 중...")
 def load_orders(start, end):
     return Cafe24Client().get_orders(start, end)
@@ -203,28 +211,15 @@ def save_inventory_snapshot(inventory):
     return len(hist)
 
 
-# ====================== 사이드바 (탭 네비 + 주문기간) ======================
+# ====================== 사이드바 (탭 네비) ======================
 with st.sidebar:
     st.title("📊 그로스 대시보드")
     page = st.radio("대시보드 이동",
                     ["매출 대시보드", "상품 대시보드", "재고 대시보드"])
     st.divider()
-    st.header("주문 데이터 기간")
-    today = date.today()
-    start_date = st.date_input("시작일", today - timedelta(days=30))
-    end_date = st.date_input("종료일", today)
-    run = st.button("주문 데이터 새로고침", type="primary")
+    st.caption("데이터는 매일 아침 자동으로 갱신됩니다.")
 
-if run:
-    st.session_state["orders"] = load_orders(str(start_date), str(end_date))
-elif "orders" not in st.session_state:
-    try:
-        st.session_state["orders"] = load_orders(str(start_date), str(end_date))
-    except Exception as e:
-        st.session_state["orders"] = None
-        st.warning("주문 데이터 자동 로드 실패. 사이드바에서 새로고침을 눌러주세요.\n\n" + str(e)[:300])
-
-orders = st.session_state.get("orders")
+orders = None  # 모든 탭이 data/*.json을 읽음 (카페24 토큰 불필요)
 
 
 # ======================================================================
@@ -232,41 +227,17 @@ orders = st.session_state.get("orders")
 # ======================================================================
 def render_sales(orders):
     st.title("매출 대시보드")
-    if not orders:
-        st.info("주문 데이터를 불러오는 중입니다. 사이드바에서 새로고침을 눌러주세요.")
+
+    # 매일 자동 생성된 sales.json 읽기 (토큰 불필요)
+    try:
+        d = load_data_json("sales.json")
+    except Exception:
+        st.info("아직 매출 데이터가 없어요. (data/sales.json 생성 필요 — GitHub Actions 실행)")
         return
 
-    # 방문자 CSV (상단 KPI의 유입수/전환율에 사용)
-    csv_file = st.file_uploader("방문자 CSV 업로드 (처음방문vs재방문 구매)",
-                                type=["csv"], key="visitor_csv")
-    adf = None
-    if csv_file is not None:
-        adf = pd.read_csv(csv_file)
-        adf["date"] = pd.to_datetime(adf["date"])
-        adf = adf.sort_values("date").set_index("date")
-        for c in ["first_visit_count", "revisit_count", "first_visit_purchase",
-                  "first_visit_amount", "revisit_purchase", "revisit_amount"]:
-            if c in adf.columns:
-                adf[c] = pd.to_numeric(adf[c], errors="coerce").fillna(0)
-        adf["방문수"] = adf["first_visit_count"] + adf["revisit_count"]
-        adf["구매건수"] = adf["first_visit_purchase"] + adf["revisit_purchase"]
-        adf["신규유입비중"] = (adf["first_visit_count"] / adf["방문수"] * 100).round(1)
-        adf["신규전환율"] = (adf["first_visit_purchase"] / adf["first_visit_count"] * 100).round(3)
-        adf["재방문전환율"] = (adf["revisit_purchase"] / adf["revisit_count"] * 100).round(3)
-        adf["전체전환율"] = (adf["구매건수"] / adf["방문수"] * 100).round(3)
-        adf["신규객단가"] = (adf["first_visit_amount"] / adf["first_visit_purchase"]).fillna(0).round(0)
-        adf["재방문객단가"] = (adf["revisit_amount"] / adf["revisit_purchase"]).fillna(0).round(0)
-
-    odf = build_order_df(orders)
-    valid = odf[odf["결제완료"] & ~odf["취소"]]
-    canceled = odf[odf["취소"]]
-    conv_sales = valid["결제금액"].sum()
-    conv_count = len(valid)
-    refund_amount = canceled["결제금액"].sum()
-    gross = odf[odf["결제완료"]]["결제금액"].sum()
-    aov = conv_sales / conv_count if conv_count else 0
-    유입수 = int(adf["방문수"].sum()) if adf is not None else None
-    전환율 = (adf["구매건수"].sum() / adf["방문수"].sum() * 100) if (adf is not None and adf["방문수"].sum()) else None
+    p = d["period"]
+    st.caption(f'{p["start"]} ~ {p["end"]} (최근 {p["days"]}일) · 갱신 '
+               + d["generated_at"][:16].replace("T", " "))
 
     # ----- 디자인 스타일 (화이트 카드 + 블루 포인트) -----
     st.markdown("""<style>
@@ -284,16 +255,40 @@ def render_sales(orders):
     .rs-sub{font-size:13px;color:#6B7280;font-weight:400;}
     </style>""", unsafe_allow_html=True)
 
-    refund_rate = (refund_amount / gross * 100) if gross else 0
+    # 방문자 CSV (상단 KPI의 유입수/전환율 + 유입·전환 분석에 사용)
+    csv_file = st.file_uploader("방문자 CSV 업로드 (처음방문vs재방문 구매)",
+                                type=["csv"], key="visitor_csv")
+    adf = None
+    유입수 = 전환율 = None
+    if csv_file is not None:
+        adf = pd.read_csv(csv_file)
+        adf["date"] = pd.to_datetime(adf["date"])
+        adf = adf.sort_values("date").set_index("date")
+        for c in ["first_visit_count", "revisit_count", "first_visit_purchase",
+                  "first_visit_amount", "revisit_purchase", "revisit_amount"]:
+            if c in adf.columns:
+                adf[c] = pd.to_numeric(adf[c], errors="coerce").fillna(0)
+        adf["방문수"] = adf["first_visit_count"] + adf["revisit_count"]
+        adf["구매건수"] = adf["first_visit_purchase"] + adf["revisit_purchase"]
+        adf["신규유입비중"] = (adf["first_visit_count"] / adf["방문수"] * 100).round(1)
+        adf["신규전환율"] = (adf["first_visit_purchase"] / adf["first_visit_count"] * 100).round(3)
+        adf["재방문전환율"] = (adf["revisit_purchase"] / adf["revisit_count"] * 100).round(3)
+        adf["전체전환율"] = (adf["구매건수"] / adf["방문수"] * 100).round(3)
+        adf["신규객단가"] = (adf["first_visit_amount"] / adf["first_visit_purchase"]).fillna(0).round(0)
+        adf["재방문객단가"] = (adf["revisit_amount"] / adf["revisit_purchase"]).fillna(0).round(0)
+        유입수 = int(adf["방문수"].sum())
+        if adf["방문수"].sum():
+            전환율 = adf["구매건수"].sum() / adf["방문수"].sum() * 100
 
     # 1) 상단 KPI 6개 (카드)
+    k = d["kpi"]
     cards = [
-        ("총 매출", won_short(conv_sales), ""),
-        ("전환수", f"{conv_count:,}건", ""),
-        ("평균 객단가", won(aov), ""),
+        ("총 매출", won_short(k["total_sales"]), ""),
+        ("전환수", f'{k["conv_count"]:,}건', ""),
+        ("평균 객단가", won(k["aov"]), ""),
         ("유입수", f"{유입수:,}" if 유입수 is not None else "—", "· CSV"),
         ("전환율", f"{전환율:.1f}%" if 전환율 is not None else "—", "· CSV"),
-        ("환불율", f"{refund_rate:.1f}%", ""),
+        ("환불율", f'{k["refund_rate"]:.1f}%', ""),
     ]
     kpi_html = '<div class="kpi-grid">' + "".join(
         f'<div class="kpi-card"><div class="kpi-label">{l} <span class="kpi-tag">{tag}</span></div>'
@@ -302,31 +297,13 @@ def render_sales(orders):
     if adf is None:
         st.caption("유입수·전환율은 위에서 방문자 CSV를 올리면 표시됩니다.")
 
-    # 2~3) 신규 vs 재구매 비율 막대 + 직전 기간 등락
+    # 2~3) 신규 vs 재구매 비율 막대 + 직전 기간 등락 (JSON에 포함)
     st.subheader("신규 구매 vs 재구매")
-    new_sales = valid[valid["신규고객"]]["결제금액"].sum()
-    repeat_sales = valid[~valid["신규고객"]]["결제금액"].sum()
+    nr = d["new_vs_repeat"]
+    new_sales, repeat_sales = nr["new_sales"], nr["repeat_sales"]
     tot = new_sales + repeat_sales
     new_pct = round(new_sales / tot * 100) if tot else 0
     rep_pct = 100 - new_pct
-
-    L = (end_date - start_date).days + 1
-    prev_end = start_date - timedelta(days=1)
-    prev_start = prev_end - timedelta(days=L - 1)
-    try:
-        prev_orders = load_orders(str(prev_start), str(prev_end))
-    except Exception:
-        prev_orders = []
-    pv = build_order_df(prev_orders) if prev_orders else pd.DataFrame()
-    if not pv.empty:
-        pv = pv[pv["결제완료"] & ~pv["취소"]]
-        prev_new = pv[pv["신규고객"]]["결제금액"].sum()
-        prev_repeat = pv[~pv["신규고객"]]["결제금액"].sum()
-    else:
-        prev_new = prev_repeat = 0
-
-    def delta_num(cur, prev):
-        return (cur / prev - 1) * 100 if prev else None
 
     def delta_span(v):
         if v is None:
@@ -335,42 +312,41 @@ def render_sales(orders):
         arrow = "▲" if v > 0 else ("▼" if v < 0 else "─")
         return f'<span style="color:{color};font-weight:600;">{arrow} {abs(v):.1f}%</span>'
 
-    dn_new = delta_num(new_sales, prev_new)
-    dn_rep = delta_num(repeat_sales, prev_repeat)
+    pp = nr.get("prev_period", {})
+    prev_label = f'직전 {p["days"]}일'
+    if pp:
+        prev_label += f' ({pp["start"][5:]}~{pp["end"][5:]})'
     st.markdown(f"""<div class="wcard">
       <div class="ratio-bar"><div style="width:{new_pct}%;background:#378ADD;"></div><div style="width:{rep_pct}%;background:#B5D4F4;"></div></div>
       <div class="ratio-stats">
         <div><div class="rs-label"><span class="rs-dot" style="background:#378ADD;"></span>신규 구매</div>
           <div class="rs-val">{won_short(new_sales)} <span class="rs-sub">{new_pct}%</span></div>
-          {delta_span(dn_new)} <span class="rs-sub">직전 {L}일 대비</span></div>
+          {delta_span(nr.get("new_delta_pct"))} <span class="rs-sub">{prev_label} 대비</span></div>
         <div><div class="rs-label"><span class="rs-dot" style="background:#B5D4F4;"></span>재구매</div>
           <div class="rs-val">{won_short(repeat_sales)} <span class="rs-sub">{rep_pct}%</span></div>
-          {delta_span(dn_rep)} <span class="rs-sub">직전 {L}일 대비</span></div>
+          {delta_span(nr.get("repeat_delta_pct"))} <span class="rs-sub">{prev_label} 대비</span></div>
       </div>
     </div>""", unsafe_allow_html=True)
 
     # 4) 일별 매출 추이 (신규/재구매 누적) + 메모
     st.subheader("일별 매출 추이")
     st.caption("신규·재구매를 쌓아 보여줍니다. 급변한 날은 메모로 기록해두세요.")
-    daily = (valid.groupby([valid["날짜"].dt.date, "신규고객"])["결제금액"]
-             .sum().unstack(fill_value=0))
-    daily = daily.rename(columns={True: "신규구매", False: "재구매"}).sort_index()
-    for col in ["신규구매", "재구매"]:
-        if col not in daily.columns:
-            daily[col] = 0
-    total_series = daily["신규구매"] + daily["재구매"]
-    date_list = [str(d) for d in daily.index]
+    daily = d["daily"]
+    date_list = [r["date"] for r in daily]
+    new_vals = [r["new"] for r in daily]
+    rep_vals = [r["repeat"] for r in daily]
+    total_by_date = {r["date"]: r["new"] + r["repeat"] for r in daily}
     memos = load_memos()
 
     fig = go.Figure()
-    fig.add_bar(x=date_list, y=daily["신규구매"], name="신규구매", marker_color="#378ADD")
-    fig.add_bar(x=date_list, y=daily["재구매"], name="재구매", marker_color="#B5D4F4")
+    fig.add_bar(x=date_list, y=new_vals, name="신규구매", marker_color="#378ADD")
+    fig.add_bar(x=date_list, y=rep_vals, name="재구매", marker_color="#B5D4F4")
     fig.update_layout(barmode="stack", height=360, margin=dict(t=30, b=10, l=10, r=10),
                       legend=dict(orientation="h", y=1.12, x=0),
                       plot_bgcolor="white", yaxis=dict(gridcolor="#EEF1F5"))
     for ds in date_list:
         if ds in memos and memos[ds].strip():
-            fig.add_annotation(x=ds, y=float(total_series.loc[pd.to_datetime(ds).date()]),
+            fig.add_annotation(x=ds, y=float(total_by_date[ds]),
                                text="📌 " + memos[ds], showarrow=True, arrowhead=2,
                                ax=0, ay=-40, bgcolor="#FFF7E6", bordercolor="#E0A800",
                                font=dict(size=11))
@@ -389,39 +365,37 @@ def render_sales(orders):
             save_memos(memos)
             st.rerun()
 
-    active = {d: t for d, t in sorted(memos.items()) if t.strip()}
+    active = {dd: t for dd, t in sorted(memos.items()) if t.strip()}
     if active:
-        for d, t in active.items():
+        for dd, t in active.items():
             a1, a2 = st.columns([6, 1])
-            a1.markdown(f"📌 **{d}** — {t}")
-            if a2.button("삭제", key=f"del_{d}", use_container_width=True):
-                memos.pop(d, None)
+            a1.markdown(f"📌 **{dd}** — {t}")
+            if a2.button("삭제", key=f"del_{dd}", use_container_width=True):
+                memos.pop(dd, None)
                 save_memos(memos)
                 st.rerun()
     else:
         st.caption("아직 기록된 메모가 없어요. 위에서 날짜를 고르고 메모를 추가해보세요.")
 
-    # 유입 · 전환 상세 (상단에서 올린 CSV 재사용)
-    st.divider()
-    st.subheader("유입 · 전환 분석")
-    if adf is None:
-        st.info("위에서 방문자 CSV를 올리면 유입·전환율·객단가 분석이 표시됩니다.")
-        return
-    st.caption("유입 — 신규 vs 재방문")
-    st.bar_chart(adf[["first_visit_count", "revisit_count"]]
-                 .rename(columns={"first_visit_count": "신규방문", "revisit_count": "재방문"}))
-    st.caption("전환율 — 신규 / 재방문 / 전체")
-    st.line_chart(adf[["신규전환율", "재방문전환율", "전체전환율"]])
-    st.caption("객단가 — 신규 / 재방문")
-    st.line_chart(adf[["신규객단가", "재방문객단가"]])
-    st.caption("신규 그로스 진단 (전반 대비 후반 평균 변화)")
-    levers = {"신규 유입수": adf["first_visit_count"], "신규 전환율(%)": adf["신규전환율"],
-              "신규 객단가": adf["신규객단가"], "신규 매출": adf["first_visit_amount"]}
-    cols = st.columns(len(levers))
-    for col, (name, s) in zip(cols, levers.items()):
-        _, last, rate = half_change(s)
-        arrow = "▲" if rate > 0 else ("▼" if rate < 0 else "─")
-        col.metric(name, f"{last:,.1f}" if "율" in name else f"{last:,.0f}", f"{arrow} {rate:+.1f}%")
+    # 5) 유입 · 전환 분석 (CSV 업로드 시)
+    if adf is not None:
+        st.divider()
+        st.subheader("유입 · 전환 분석")
+        st.caption("유입 — 신규 vs 재방문")
+        st.bar_chart(adf[["first_visit_count", "revisit_count"]]
+                     .rename(columns={"first_visit_count": "신규방문", "revisit_count": "재방문"}))
+        st.caption("전환율 — 신규 / 재방문 / 전체")
+        st.line_chart(adf[["신규전환율", "재방문전환율", "전체전환율"]])
+        st.caption("객단가 — 신규 / 재방문")
+        st.line_chart(adf[["신규객단가", "재방문객단가"]])
+        st.caption("신규 그로스 진단 (전반 대비 후반 평균 변화)")
+        levers = {"신규 유입수": adf["first_visit_count"], "신규 전환율(%)": adf["신규전환율"],
+                  "신규 객단가": adf["신규객단가"], "신규 매출": adf["first_visit_amount"]}
+        cols = st.columns(len(levers))
+        for col, (name, s) in zip(cols, levers.items()):
+            _, last, rate = half_change(s)
+            arrow = "▲" if rate > 0 else ("▼" if rate < 0 else "─")
+            col.metric(name, f"{last:,.1f}" if "율" in name else f"{last:,.0f}", f"{arrow} {rate:+.1f}%")
 
 
 # ======================================================================
@@ -429,8 +403,20 @@ def render_sales(orders):
 # ======================================================================
 def render_product(orders):
     st.title("상품 대시보드")
-    product_csv = st.file_uploader("상품별 매출분석 CSV 업로드", type=["csv"], key="product_csv")
+    try:
+        d = load_data_json("product.json")
+    except Exception:
+        st.info("아직 상품 데이터가 없어요. (data/product.json 생성 필요 — GitHub Actions 실행)")
+        return
+    p = d["period"]
+    st.caption(f'{p["start"]} ~ {p["end"]} (최근 {p["days"]}일) · 갱신 '
+               + d["generated_at"][:16].replace("T", " "))
 
+    cat_colors = {"캐리어": "#378ADD", "악세사리": "#1D9E75", "프로모션": "#E0A800",
+                  "합구매 악세사리": "#16A085", "미분류": "#888780"}
+
+    # ----- 상품 CSV 업로드 (조회 → 전환 퍼널) : CSV는 그대로 유지 -----
+    product_csv = st.file_uploader("상품별 매출분석 CSV 업로드", type=["csv"], key="product_csv")
     if product_csv is not None:
         pdf = pd.read_csv(product_csv).rename(columns={
             "exposure_count": "조회수", "cart_count": "장바구니", "order_count": "전환수",
@@ -439,20 +425,7 @@ def render_product(orders):
         for c in ["조회수", "장바구니", "전환수", "전환율", "매출", "장바구니→주문율"]:
             if c in pdf.columns:
                 pdf[c] = pd.to_numeric(pdf[c], errors="coerce").fillna(0)
-        prod_cat = {}
-        if orders:
-            tmp = {}
-            for o in orders:
-                for it in (o.get("items") or []):
-                    pno = it.get("product_no")
-                    if pno is None:
-                        continue
-                    대 = classify(it.get("product_name", ""), option_label(it))[0]
-                    tmp.setdefault(str(pno), Counter())[대] += 1
-            prod_cat = {k: c.most_common(1)[0][0] for k, c in tmp.items()}
-        pdf["대분류"] = pdf.apply(
-            lambda r: prod_cat.get(str(r.get("product_no", "")),
-                                   classify(r.get("상품명", ""), "")[0]), axis=1)
+        pdf["대분류"] = pdf["상품명"].apply(lambda n: classify(n, "")[0])
 
         st.subheader("상품 퍼널 (조회 → 장바구니 → 전환)")
         p1, p2, p3 = st.columns(3)
@@ -463,9 +436,7 @@ def render_product(orders):
 
         st.caption("조회수 대비 전환율 (색=카테고리, 버블=매출). 오른쪽 아래 = 개선 후보")
         fig = px.scatter(pdf, x="조회수", y="전환율", size="매출", color="대분류",
-                         hover_name="상품명", size_max=45,
-                         color_discrete_map={"캐리어": "#378ADD", "악세사리": "#1D9E75",
-                                             "미분류": "#888780"})
+                         hover_name="상품명", size_max=45, color_discrete_map=cat_colors)
         fig.update_layout(height=400, margin=dict(t=10, b=10, l=10, r=10),
                           legend=dict(orientation="h", y=-0.18))
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -491,105 +462,74 @@ def render_product(orders):
     else:
         st.info("상품별 매출분석 CSV를 올리면 조회·전환 퍼널 분석이 표시됩니다.")
 
-    if not orders:
-        return
-
-    # 카테고리별 분석
+    # ----- 카테고리별 분석 (JSON) -----
     st.divider()
     st.subheader("카테고리별 분석")
-    exclude_staff = st.checkbox("임직원 상품 제외", value=False)
-    crows = []
-    for o in orders:
-        if o.get("canceled") == "T":
-            continue
-        odate = (o.get("order_date") or "")[:10]
-        for it in (o.get("items") or []):
-            net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
-            if net <= 0:
-                continue
-            amt = (to_amount(it.get("product_price")) + to_amount(it.get("option_price"))) * net
-            대, 중, 태그, staff = classify(it.get("product_name", ""), option_label(it))
-            crows.append({"날짜": odate, "대분류": 대, "중분류": 중, "모델태그": 태그,
-                          "임직원": staff, "수량": net, "매출": amt})
-    cdf = pd.DataFrame(crows)
-    if exclude_staff and not cdf.empty:
-        cdf = cdf[~cdf["임직원"]]
-    if not cdf.empty:
-        big = cdf.groupby("대분류").agg(매출=("매출", "sum"), 수량=("수량", "sum"))
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            f = px.pie(values=big["매출"], names=big.index, hole=0.55,
-                       color_discrete_sequence=["#378ADD", "#1D9E75", "#888780"])
-            f.update_traces(textinfo="percent+label")
-            f.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
-                            legend=dict(orientation="h", y=-0.1))
-            st.plotly_chart(f, use_container_width=True, config={"displayModeBar": False})
-        with cc2:
-            st.dataframe(big.style.format({"매출": "₩{:,.0f}", "수량": "{:,}"}),
-                         use_container_width=True)
-        carrier = cdf[cdf["대분류"] == "캐리어"]
-        if not carrier.empty:
-            st.caption("캐리어 모델별 매출")
-            ms = (carrier.groupby("중분류").agg(매출=("매출", "sum"), 수량=("수량", "sum"))
-                  .sort_values("매출", ascending=False))
-            st.bar_chart(ms["매출"])
+    by_amt = d["category"]["by_amount"]
+    by_qty = d["category"]["by_qty"]
+    big = pd.DataFrame({"매출": by_amt, "수량": by_qty}).fillna(0)
+    big["수량"] = big["수량"].astype(int)
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        f = px.pie(values=big["매출"], names=big.index, hole=0.55,
+                   color=big.index, color_discrete_map=cat_colors)
+        f.update_traces(textinfo="percent+label")
+        f.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
+                        legend=dict(orientation="h", y=-0.1))
+        st.plotly_chart(f, use_container_width=True, config={"displayModeBar": False})
+    with cc2:
+        st.dataframe(big.style.format({"매출": "₩{:,.0f}", "수량": "{:,}"}),
+                     use_container_width=True)
 
-    # 상품별 매출 순위
+    models = d.get("carrier_models", {})
+    if models:
+        st.caption("캐리어 모델별 매출")
+        st.bar_chart(pd.Series(models, name="매출"))
+
+    # ----- 상품별 매출 순위 TOP 20 (JSON) -----
     st.divider()
     st.subheader("상품별 매출 순위 TOP 20")
-    irows = []
-    for o in orders:
-        if o.get("canceled") == "T":
-            continue
-        for it in (o.get("items") or []):
-            qty = int(to_amount(it.get("quantity")))
-            irows.append({"상품명": it.get("product_name", "(이름없음)"), "수량": qty,
-                          "매출": qty * to_amount(it.get("product_price"))})
-    if irows:
-        rk = (pd.DataFrame(irows).groupby("상품명")
-              .agg(판매수량=("수량", "sum"), 매출=("매출", "sum"))
-              .sort_values("매출", ascending=False).head(20))
-        st.bar_chart(rk["매출"])
+    rk = pd.DataFrame(d.get("ranking", []))
+    if not rk.empty:
+        rk = rk.rename(columns={"name": "상품명", "qty": "판매수량", "amount": "매출"})
+        st.bar_chart(rk.set_index("상품명")["매출"])
+        st.dataframe(rk.style.format({"판매수량": "{:,}", "매출": "₩{:,.0f}"}),
+                     use_container_width=True, hide_index=True)
 
-    # 일자별 옵션 판매 수량
+    # ----- 일자별 옵션 판매 수량 (JSON) -----
     st.divider()
     st.subheader("일자별 제품 옵션 판매 수량")
-    orows = []
-    for o in orders:
-        odate = (o.get("order_date") or "")[:10]
-        for it in (o.get("items") or []):
-            net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
-            orows.append({"날짜": odate, "상품명": it.get("product_name", "(이름없음)"),
-                          "옵션": option_label(it), "순수량": net})
-    oodf = pd.DataFrame(orows)
-    oodf = oodf[oodf["날짜"] != ""]
+    od = d.get("option_daily", {})
+    rows = []
+    for key, datemap in od.items():
+        name = key.split(" · ", 1)[0]
+        for dt, q in datemap.items():
+            rows.append({"상품": name, "옵션라벨": key, "날짜": dt, "순수량": q})
+    oodf = pd.DataFrame(rows)
     if not oodf.empty:
         oodf["날짜"] = pd.to_datetime(oodf["날짜"]).dt.date
-        order_by = (oodf.groupby("상품명")["순수량"].sum()
+        order_by = (oodf.groupby("상품")["순수량"].sum()
                     .sort_values(ascending=False).index.tolist())
         sel = st.multiselect("상품 선택", order_by, default=order_by[:1])
-        view = oodf[oodf["상품명"].isin(sel)] if sel else oodf
-        view = view.assign(옵션라벨=view["상품명"] + " · " + view["옵션"])
+        view = oodf[oodf["상품"].isin(sel)] if sel else oodf
         piv = (view.pivot_table(index="날짜", columns="옵션라벨", values="순수량",
                                 aggfunc="sum", fill_value=0).sort_index())
         st.dataframe(piv, use_container_width=True)
 
-    # 옵션 분류 매핑 참조표
+    # ----- 옵션 분류 매핑 참조표 (JSON) -----
     st.divider()
     with st.expander("[참조] 옵션 분류 매핑 표"):
-        seen = {}
-        for o in orders:
-            for it in (o.get("items") or []):
-                pname = it.get("product_name", "(이름없음)")
-                opt = option_label(it)
-                if (pname, opt) not in seen:
-                    대, 중, 태그, staff = classify(pname, opt)
-                    seen[(pname, opt)] = {"상품명": pname, "옵션": opt, "대분류": 대,
-                                          "중분류": 중, "모델태그": (태그 + "용") if 태그 else "",
-                                          "임직원": "Y" if staff else ""}
+        seen = []
+        for key in od.keys():
+            parts = key.split(" · ", 1)
+            name = parts[0]
+            opt = parts[1] if len(parts) > 1 else ""
+            대, 중, 태그, staff = classify(name, opt)
+            seen.append({"상품명": name, "옵션": opt, "대분류": 대, "중분류": 중,
+                         "모델태그": (태그 + "용") if 태그 else "",
+                         "임직원": "Y" if staff else ""})
         if seen:
-            st.dataframe(pd.DataFrame(list(seen.values()))
-                         .sort_values(["대분류", "중분류", "상품명", "옵션"]),
+            st.dataframe(pd.DataFrame(seen).sort_values(["대분류", "중분류", "상품명", "옵션"]),
                          use_container_width=True, hide_index=True)
 
 
@@ -599,35 +539,22 @@ def render_product(orders):
 def render_inventory(orders):
     st.title("재고 대시보드")
     st.caption("전체 상품 품목별 재고 · 판매속도(7/30/90일) 기반 품절 예측 · 리드타임 90일")
+    try:
+        d = load_data_json("inventory.json")
+    except Exception:
+        st.info("아직 재고 데이터가 없어요. (data/inventory.json 생성 필요 — GitHub Actions 실행)")
+        return
+    st.caption("갱신 " + d["generated_at"][:16].replace("T", " "))
+
     reorder_csv = st.file_uploader("발주 일정 CSV (선택: variant_code, 입고예정일)",
                                    type=["csv"], key="reorder_csv")
 
-    if st.button("재고 불러오기 (전체 상품)"):
-        st.session_state["inventory"] = load_inventory()
-        cnt = save_inventory_snapshot(st.session_state["inventory"])
-        st.success(f"재고를 불러왔어요. (재고 이력 {cnt}일치 누적)")
-    inventory = st.session_state.get("inventory")
-
-    if not inventory:
-        st.info("'재고 불러오기'를 누르면 전체 상품의 품목별 재고를 조회합니다.")
-        return
-    if not orders:
-        st.info("판매속도 계산을 위해 주문 데이터가 필요합니다.")
-        return
+    inv = pd.DataFrame(d["items"]).rename(columns={
+        "product": "상품명", "option": "옵션", "stock": "재고", "safety": "안전재고",
+        "daily_7": "일판매(7일)", "daily_30": "일판매(30일)", "daily_90": "일판매(90일)",
+        "sellout_days": "소진일(30일속도)", "selling": "판매중"})
 
     today = date.today()
-    o90 = load_orders(str(today - timedelta(days=90)), str(today))
-    s7 = variant_sales_in_range(o90, today - timedelta(days=6), today)
-    s30 = variant_sales_in_range(o90, today - timedelta(days=29), today)
-    s90 = variant_sales_in_range(o90, today - timedelta(days=89), today)
-
-    inv = pd.DataFrame(inventory)
-    inv["일판매(7일)"] = inv["variant_code"].map(lambda v: round(s7.get(v, 0) / 7, 2))
-    inv["일판매(30일)"] = inv["variant_code"].map(lambda v: round(s30.get(v, 0) / 30, 2))
-    inv["일판매(90일)"] = inv["variant_code"].map(lambda v: round(s90.get(v, 0) / 90, 2))
-    inv["소진일(30일속도)"] = inv.apply(
-        lambda r: round(r["재고"] / r["일판매(30일)"]) if r["일판매(30일)"] > 0 else None, axis=1)
-
     incoming = {}
     if reorder_csv is not None:
         try:
@@ -638,11 +565,11 @@ def render_inventory(orders):
             st.warning("발주 일정 CSV 읽기 실패: " + str(e)[:150])
     inv["입고예정"] = inv["variant_code"].map(lambda v: incoming.get(str(v), ""))
 
-    def has_incoming_soon(d):
-        if not d:
+    def has_incoming_soon(x):
+        if not x:
             return False
         try:
-            return (datetime.strptime(d, "%Y-%m-%d").date() - today).days <= 90
+            return (datetime.strptime(x, "%Y-%m-%d").date() - today).days <= 90
         except ValueError:
             return False
 
@@ -652,7 +579,7 @@ def render_inventory(orders):
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("총 품목 수", f"{len(inv):,}")
-    k2.metric("품절(재고 0)", f"{int((inv['재고']==0).sum())}개")
+    k2.metric("품절(재고 0)", f"{int((inv['재고'] == 0).sum())}개")
     k3.metric("품절 임박(90일 내)", f"{len(soon)}개")
     k4.metric("부진 재고(30일 무판매)", f"{len(stagnant)}개")
 
@@ -665,37 +592,25 @@ def render_inventory(orders):
     else:
         st.success("90일 내 품절 위험 품목이 없습니다. 👍")
 
-    st.subheader("판매량 추이 변화 (모델별 WoW / MoM)")
-    wr = model_sales_in_range(o90, today - timedelta(days=6), today)
-    wp = model_sales_in_range(o90, today - timedelta(days=13), today - timedelta(days=7))
-    mr = model_sales_in_range(o90, today - timedelta(days=29), today)
-    mp = model_sales_in_range(o90, today - timedelta(days=59), today - timedelta(days=30))
-
-    def pct(r, p):
-        return round((r / p - 1) * 100, 1) if p else None
-    rows = [{"모델/카테고리": k, "최근7일": wr.get(k, 0), "이전7일": wp.get(k, 0),
-             "WoW%": pct(wr.get(k, 0), wp.get(k, 0)), "최근30일": mr.get(k, 0),
-             "이전30일": mp.get(k, 0), "MoM%": pct(mr.get(k, 0), mp.get(k, 0))}
-            for k in sorted(set(wr) | set(wp) | set(mr) | set(mp))]
-    st.dataframe(pd.DataFrame(rows).sort_values("최근30일", ascending=False),
-                 use_container_width=True, hide_index=True)
-    st.caption("YoY는 1년치 데이터가 쌓이면 추가됩니다.")
-
     st.subheader("부진 재고 (재고 있으나 최근 30일 판매 0)")
     if not stagnant.empty:
-        st.dataframe(stagnant.sort_values("재고", ascending=False)
-                     [["상품명", "옵션", "재고", "일판매(90일)", "판매중"]],
+        view = stagnant.sort_values("재고", ascending=False).copy()
+        view["판매중"] = view["판매중"].map(lambda b: "○" if b else "×")
+        st.dataframe(view[["상품명", "옵션", "재고", "일판매(90일)", "판매중"]],
                      use_container_width=True, hide_index=True)
     else:
         st.success("해당 품목이 없습니다.")
 
     with st.expander("📋 전체 품목 재고 표"):
-        st.dataframe(inv[["상품명", "옵션", "재고", "안전재고", "일판매(7일)", "일판매(30일)",
-                          "일판매(90일)", "소진일(30일속도)", "입고예정", "판매중"]]
+        full = inv.copy()
+        full["판매중"] = full["판매중"].map(lambda b: "○" if b else "×")
+        st.dataframe(full[["상품명", "옵션", "재고", "안전재고", "일판매(7일)", "일판매(30일)",
+                           "일판매(90일)", "소진일(30일속도)", "입고예정", "판매중"]]
                      .sort_values(["상품명", "옵션"]),
                      use_container_width=True, hide_index=True)
 
 
+# ====================== 라우팅 ======================
 # ====================== 라우팅 ======================
 if page == "매출 대시보드":
     render_sales(orders)
