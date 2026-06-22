@@ -10,10 +10,17 @@ import json
 import os
 import time
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from cafe24_client import Cafe24Client
 from classify import classify
+
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst():
+    """한국 시간(KST) 기준 현재 시각 문자열."""
+    return datetime.now(KST).isoformat(timespec="seconds")
 
 OUT_DIR = "data"
 PERIOD_DAYS = 30  # 분석 기간 (일). 직전 동일 기간과 비교.
@@ -131,7 +138,7 @@ def build_sales(client):
                   for d, v in sorted(cur["daily"].items())]
 
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_kst(),
         "period": {"start": str(cur_start), "end": str(today), "days": PERIOD_DAYS},
         "kpi": {
             "total_sales": round(cur["conv_sales"]),
@@ -200,7 +207,7 @@ def build_product(client):
         key=lambda x: x["amount"], reverse=True)[:20]
 
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_kst(),
         "period": {"start": str(start), "end": str(today), "days": PERIOD_DAYS},
         "category": {
             "by_amount": {k: round(v) for k, v in cat_amount.items()},
@@ -295,7 +302,7 @@ def build_inventory(client):
               + ", ".join(str(s[0]) for s in skipped[:20]))
 
     return {
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "generated_at": now_kst(),
         "summary": {
             "total": len(rows),
             "products_ok": len(products) - len(skipped),
