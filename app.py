@@ -660,15 +660,20 @@ def render_inventory(orders):
             vel = it.get("daily_30", 0)
             free = max(total_stock.get(k, 0) - it["stock"], 0)
             free_sell = round((it["stock"] + free) / vel) if vel > 0 else None
-            rlist = restocks.get(it.get("variant_code"), [])
-            in_sell = project_sellout(it["stock"], vel, rlist, today)
+            # 입고: 옵션키로 찾아 이 페이지(pno)에 배분된 수량만 반영
+            okey = f"{k[0]}|{k[1]}|{k[2]}" if (k[0] and k[2]) else None
+            entries = restocks.get(okey, []) if okey else []
+            page_list = [{"date": e["date"], "qty": e.get("alloc", {}).get(pno, 0)}
+                         for e in entries]
+            page_list = [e for e in page_list if e["qty"] > 0]
+            in_sell = project_sellout(it["stock"], vel, page_list, today)
             sched = ", ".join(f'{e["date"][5:]}·{e["qty"]}개'
-                              for e in sorted(rlist, key=lambda e: e["date"])) or "—"
+                              for e in sorted(page_list, key=lambda e: e["date"])) or "—"
             rows.append({
                 "옵션": it["option"], "현재고": it["stock"], "30일판매": vel,
                 "현재 품절": _sell(it.get("sellout_30")),
                 "여유재고": free, "여유 반영 품절": _sell(free_sell),
-                "입고 예정": sched, "입고 반영 품절": _sell(in_sell),
+                "입고 배분": sched, "입고 반영 품절": _sell(in_sell),
             })
         st.dataframe(pd.DataFrame(rows).style.apply(hl, axis=1),
                      hide_index=True, use_container_width=True)
@@ -746,6 +751,8 @@ def project_sellout(stock, rate, restock_list, today):
 def render_restock_section(items):
     st.divider()
     st.header("3. 입고 예정 일정")
+    st.caption("입고는 옵션 단위로 한 번에 들어오고, 248·270·184 페이지로 나눠 배분합니다. "
+               "배분한 수량은 2번 각 페이지의 '입고 반영 품절'에 반영돼요.")
     cfg = JSONBIN_RESTOCK
     if not (cfg["bin_id"] and cfg["api_key"]):
         st.info("⚠ JSONBin 설정이 비어 있어 입고 일정이 지금 세션에만 임시 저장됩니다. "
@@ -753,61 +760,83 @@ def render_restock_section(items):
 
     restocks = load_restocks()
     today = date.today()
-    targets = [it for it in items if str(it.get("product_no")) in ("248", "270")]
+    targets = [it for it in items if str(it.get("product_no")) in ("248", "270", "184")]
     if not targets:
-        st.caption("248·270 상품 데이터가 없습니다.")
+        st.caption("248·270·184 상품 데이터가 없습니다.")
         return
-    vc_to_item = {it["variant_code"]: it for it in targets}
-    # 같은 옵션명이 페이지별로 겹칠 수 있어 라벨에 상품번호를 붙여 구분
-    label_to_vc = {f'{it["option"]}  ·  no.{it["product_no"]}': it["variant_code"]
-                   for it in targets}
 
-    # 입고 일정 추가 (옵션 + 캘린더 + 수량)
+    # 옵션(인치그룹·색상) 목록 — 세 페이지에 존재하는 모든 옵션을 합쳐서 중복 제거
+    opt_choices = {}   # 표시라벨 -> opt_key("그룹|플랩|색상")
+    for it in targets:
+        g, c = parse_odit_option(it.get("option", ""))
+        flap = "플랩" in (it.get("option", "") or "")
+        if not (g and c):
+            continue
+        okey = f"{g}|{flap}|{c}"
+        label = f"{g} {c}"
+        opt_choices[label] = okey
+    opt_labels = sorted(opt_choices.keys())
+
+    # 입고 일정 추가: 옵션 + 입고일 + 총수량 + 페이지별 배분(248/270/184)
     st.markdown("**입고 일정 추가**")
-    c1, c2, c3, c4 = st.columns([3, 1.6, 1.2, 1])
-    sel_label = c1.selectbox("옵션", list(label_to_vc.keys()), key="rs_opt",
-                             label_visibility="collapsed")
-    in_date = c2.date_input("입고일", today, key="rs_date", label_visibility="collapsed")
-    in_qty = c3.number_input("수량", min_value=1, value=10, step=1, key="rs_qty",
-                             label_visibility="collapsed")
-    if c4.button("추가", use_container_width=True):
-        vc = label_to_vc[sel_label]
-        restocks.setdefault(vc, []).append({"date": str(in_date), "qty": int(in_qty)})
+    r1c1, r1c2, r1c3 = st.columns([3, 1.6, 1.2])
+    sel_label = r1c1.selectbox("옵션", opt_labels, key="rs_opt",
+                               label_visibility="collapsed")
+    in_date = r1c2.date_input("입고일", today, key="rs_date", label_visibility="collapsed")
+    in_qty = r1c3.number_input("총 입고수량", min_value=0, value=0, step=1, key="rs_qty",
+                               label_visibility="collapsed", placeholder="총 입고수량")
+    r2c1, r2c2, r2c3, r2c4 = st.columns([1, 1, 1, 1])
+    a248 = r2c1.number_input("248 배분", min_value=0, value=0, step=1, key="rs_a248")
+    a270 = r2c2.number_input("270 배분", min_value=0, value=0, step=1, key="rs_a270")
+    a184 = r2c3.number_input("184 배분", min_value=0, value=0, step=1, key="rs_a184")
+    if r2c4.button("추가", use_container_width=True):
+        okey = opt_choices[sel_label]
+        entry = {"date": str(in_date), "qty": int(in_qty),
+                 "alloc": {"248": int(a248), "270": int(a270), "184": int(a184)}}
+        restocks.setdefault(okey, []).append(entry)
         save_restocks(restocks)
         st.rerun()
+    alloc_sum_hint = "배분 합계가 총 입고수량과 다르면, 표시는 되지만 페이지 반영은 배분수량 기준입니다."
+    st.caption(alloc_sum_hint)
 
-    # 품절 임박 순 + 입고 반영 품절일
+    # 등록된 입고 일정 (옵션별 · 페이지 배분)
     rows = []
-    for it in sorted(targets, key=lambda x: x["sellout_30"]
-                     if isinstance(x.get("sellout_30"), (int, float)) else 10**9):
-        vc = it["variant_code"]
-        lst = restocks.get(vc, [])
-        sched = ", ".join(f'{e["date"][5:]}·{e["qty"]}개'
-                          for e in sorted(lst, key=lambda e: e["date"])) or "—"
-        proj = project_sellout(it["stock"], it.get("daily_30", 0), lst, today)
-        rows.append({
-            "옵션": it["option"], "페이지": f'no.{it["product_no"]}',
-            "현재고": it["stock"], "30일판매": it.get("daily_30", 0),
-            "현재 품절": _sell(it.get("sellout_30")), "입고 예정": sched,
-            "입고 반영 품절": _sell(proj),
-        })
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    for okey, lst in restocks.items():
+        parts = okey.split("|")
+        if len(parts) == 3:
+            g, _flap, c = parts
+            opt_name = f"{g} {c}"
+        else:
+            opt_name = okey
+        for e in sorted(lst, key=lambda e: e.get("date", "")):
+            al = e.get("alloc", {})
+            rows.append({
+                "옵션": opt_name, "입고일": e.get("date", ""),
+                "총 입고": e.get("qty", 0),
+                "248": al.get("248", 0), "270": al.get("270", 0), "184": al.get("184", 0),
+            })
+    if rows:
+        rows.sort(key=lambda r: r["입고일"])
+        st.markdown("**등록된 입고 일정**")
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-    # 등록된 입고 일정 삭제
-    active = {vc: lst for vc, lst in restocks.items() if lst}
-    if active:
-        with st.expander(f"등록된 입고 일정 ({sum(len(v) for v in active.values())}건) · 삭제"):
-            for vc, lst in active.items():
-                label = vc_to_item.get(vc, {}).get("option", vc)
-                for idx, e in enumerate(sorted(lst, key=lambda e: e["date"])):
+        with st.expander("입고 일정 삭제"):
+            for okey, lst in list(restocks.items()):
+                parts = okey.split("|")
+                opt_name = f"{parts[0]} {parts[2]}" if len(parts) == 3 else okey
+                for idx, e in enumerate(sorted(lst, key=lambda e: e.get("date", ""))):
+                    al = e.get("alloc", {})
                     a1, a2 = st.columns([5, 1])
-                    a1.write(f'{label} — {e["date"]} · {e["qty"]}개')
-                    if a2.button("삭제", key=f"rs_del_{vc}_{idx}"):
-                        restocks[vc].remove(e)
-                        if not restocks[vc]:
-                            del restocks[vc]
+                    a1.write(f'{opt_name} — {e.get("date","")} · 총 {e.get("qty",0)}개 '
+                             f'(248:{al.get("248",0)} / 270:{al.get("270",0)} / 184:{al.get("184",0)})')
+                    if a2.button("삭제", key=f"rs_del_{okey}_{idx}"):
+                        restocks[okey].remove(e)
+                        if not restocks[okey]:
+                            del restocks[okey]
                         save_restocks(restocks)
                         st.rerun()
+    else:
+        st.caption("아직 등록된 입고 일정이 없어요. 위에서 옵션·입고일·수량·배분을 넣고 추가하세요.")
 
 
 # ====================== 라우팅 ======================
