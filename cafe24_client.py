@@ -74,22 +74,37 @@ class Cafe24Client:
         임의의 API 엔드포인트를 GET 호출합니다.
         - path가 'http'로 시작하면 그 전체 URL을 그대로 호출 (다른 도메인 가능)
         - 아니면 기본 API_BASE 뒤에 붙여서 호출
+        - 속도 제한(429)·일시 오류(5xx) 시 잠시 쉬고 자동 재시도
         실패 시 카페24가 보낸 원본 응답을 그대로 노출합니다.
         """
         url = path if path.startswith("http") else f"{API_BASE}{path}"
-        resp = requests.get(
-            url,
-            headers=self._headers(),
-            params=params or {},
-            timeout=60,
-        )
-        if resp.status_code != 200:
+        last = None
+        for attempt in range(5):
+            resp = requests.get(
+                url,
+                headers=self._headers(),
+                params=params or {},
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            # 429(속도제한) 또는 5xx(서버 일시오류)면 대기 후 재시도
+            if resp.status_code == 429 or resp.status_code >= 500:
+                wait = float(resp.headers.get("Retry-After", 0)) or (1.5 * (attempt + 1))
+                time.sleep(wait)
+                last = resp
+                continue
+            # 그 외 오류는 즉시 노출
             raise RuntimeError(
                 f"카페24 API 오류 {resp.status_code}\n"
                 f"요청 URL: {resp.url}\n"
                 f"응답 내용: {resp.text}"
             )
-        return resp.json()
+        raise RuntimeError(
+            f"카페24 API 오류(재시도 초과) {last.status_code if last else '?'}\n"
+            f"요청 URL: {last.url if last else url}\n"
+            f"응답 내용: {last.text if last else ''}"
+        )
 
     # ---------- 상품 / 재고 ----------
     def get_all_products(self):

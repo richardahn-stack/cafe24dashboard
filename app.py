@@ -1,6 +1,8 @@
 """카페24 자사몰 그로스 대시보드 (3개 탭: 매출 / 상품 / 재고)."""
 import json
 import os
+import re
+import requests
 from collections import Counter
 from datetime import date, datetime, timedelta
 
@@ -536,81 +538,278 @@ def render_product(orders):
 # ======================================================================
 # 재고 대시보드
 # ======================================================================
+# ====================== 재고 파싱 헬퍼 ======================
+ODIT_COLORS = ["화이트", "실버", "다크그레이", "블랙", "솔티블루",
+               "펄스레드", "아이시핑크", "웻그린"]
+ODIT_GROUPS = ["20인치", "24인치", "26인치", "29인치", "20인치 플랩"]
+
+
+def parse_odit_option(opt):
+    """옵션값에서 (인치그룹, 색상) 추출. 예: '오딧 플랩 20인치 아이시 핑크' -> ('20인치 플랩','아이시핑크')"""
+    m = re.search(r"(\d+)\s*인치", opt or "")
+    inch = m.group(1) + "인치" if m else None
+    flap = "플랩" in (opt or "")
+    norm = re.sub(r"\(.*?\)", "", opt or "").replace("아이시 핑크", "아이시핑크")
+    color = next((c for c in ODIT_COLORS if c in norm), None)
+    group = "20인치 플랩" if flap else inch
+    return group, color
+
+
+def _sell(n):
+    return f"{int(n)}일 후" if isinstance(n, (int, float)) else "—"
+
+
 def render_inventory(orders):
     st.title("재고 대시보드")
-    st.caption("전체 상품 품목별 재고 · 판매속도(7/30/90일) 기반 품절 예측 · 리드타임 90일")
     try:
         d = load_data_json("inventory.json")
     except Exception:
         st.info("아직 재고 데이터가 없어요. (data/inventory.json 생성 필요 — GitHub Actions 실행)")
         return
-    st.caption("갱신 " + d["generated_at"][:16].replace("T", " "))
+    items = d["items"]
+    st.caption("갱신 " + d["generated_at"][:16].replace("T", " ")
+               + f" · 전체 {d['summary'].get('total', len(items)):,}개 품목")
 
-    reorder_csv = st.file_uploader("발주 일정 CSV (선택: variant_code, 입고예정일)",
-                                   type=["csv"], key="reorder_csv")
+    # ===== 1. 오딧 재고 현황 (일반 248 + 플랩 270, 인치별 묶음) =====
+    st.header("1. 오딧 재고 현황")
+    st.caption("선택 옵션별 재고 · 어제/7·30·90일 판매 · 각 속도 기준 예상 품절일 (🔴 = 30일 기준 14일 내 소진)")
 
-    inv = pd.DataFrame(d["items"]).rename(columns={
-        "product": "상품명", "option": "옵션", "stock": "재고", "safety": "안전재고",
-        "daily_7": "일판매(7일)", "daily_30": "일판매(30일)", "daily_90": "일판매(90일)",
-        "sellout_days": "소진일(30일속도)", "selling": "판매중"})
+    lookup = {}
+    for it in items:
+        if str(it.get("product_no")) in ("248", "270"):
+            g, c = parse_odit_option(it.get("option", ""))
+            if g and c:
+                lookup[(g, c)] = it
 
-    today = date.today()
-    incoming = {}
-    if reorder_csv is not None:
+    for group in ODIT_GROUPS:
+        st.markdown(f"#### {group}")
+        rows = []
+        for color in ODIT_COLORS:
+            it = lookup.get((group, color))
+            if it:
+                s30 = it.get("sellout_30")
+                urgent = isinstance(s30, (int, float)) and s30 <= 14
+                rows.append({
+                    "색상": ("🔴 " if urgent else "") + color,
+                    "재고": it.get("stock", 0),
+                    "어제": it.get("daily_1", 0),
+                    "7일": it.get("daily_7", 0),
+                    "30일": it.get("daily_30", 0),
+                    "90일": it.get("daily_90", 0),
+                    "품절(7일속도)": _sell(it.get("sellout_7")),
+                    "품절(30일속도)": _sell(s30),
+                    "품절(90일속도)": _sell(it.get("sellout_90")),
+                })
+            else:
+                rows.append({"색상": color, "재고": "", "어제": "", "7일": "", "30일": "",
+                             "90일": "", "품절(7일속도)": "", "품절(30일속도)": "", "품절(90일속도)": ""})
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    # ===== 2. 248 품절임박 + 보충 추천 (오딧 전체에서 같은 옵션 끌어오기) =====
+    st.divider()
+    st.header("2. 오딧 캐리어(248) 품절 임박 + 재고 보충 추천")
+    st.caption("248의 옵션을 품절 임박 순으로 정렬하고, 같은 인치·색상의 오딧 재고가 "
+               "다른 페이지에 여유로 남아 있을 때 그것까지 합치면 품절일이 얼마나 늦춰지는지 보여줍니다.")
+
+    EXCLUDE = ["임직원", "테스트", "POP-UP", "PRE-ORDER", "몬딱", "쿼디"]
+
+    def is_odit_supply(it):
+        text = (it.get("product", "") or "") + " " + (it.get("option", "") or "")
+        if any(x in text for x in EXCLUDE):
+            return False
+        return "오딧" in text
+
+    # (인치, 플랩, 색상) -> 보충 가능 재고 합 + 출처(상품번호별)
+    supply = {}
+    src_map = {}
+    for it in items:
+        if str(it.get("product_no")) == "248":
+            continue
+        if not is_odit_supply(it) or it.get("stock", 0) <= 0:
+            continue
+        g, c = parse_odit_option(it.get("option", ""))
+        flap = "플랩" in (it.get("option", "") or "")
+        inch = re.search(r"(\d+)", g or "").group(1) if g else None
+        if not (inch and c):
+            continue
+        key = (inch, flap, c)
+        supply[key] = supply.get(key, 0) + it["stock"]
+        src_map.setdefault(key, {})
+        src_map[key][it["product_no"]] = src_map[key].get(it["product_no"], 0) + it["stock"]
+
+    sub248 = [it for it in items if str(it.get("product_no")) == "248" and it.get("stock", 0) > 0]
+
+    def sort_key(it):
+        s = it.get("sellout_30")
+        return s if isinstance(s, (int, float)) else 10**9
+    sub248.sort(key=sort_key)
+
+    rows = []
+    for it in sub248:
+        g, c = parse_odit_option(it.get("option", ""))
+        flap = "플랩" in (it.get("option", "") or "")
+        inch = re.search(r"(\d+)", g or "").group(1) if g else None
+        add = supply.get((inch, flap, c), 0)
+        vel = it.get("daily_30", 0)
+        cur_sell = it.get("sellout_30")
+        new_sell = round((it["stock"] + add) / vel) if vel > 0 else None
+        # 출처 상위 3개
+        srcs = sorted(src_map.get((inch, flap, c), {}).items(), key=lambda x: -x[1])[:3]
+        src_txt = ", ".join(f"no.{p}({s})" for p, s in srcs) if srcs else "—"
+        rows.append({
+            "옵션": it["option"],
+            "현재고": it["stock"],
+            "30일판매": vel,
+            "현재 품절": _sell(cur_sell),
+            "여유 재고": add,
+            "여유 합산 후 품절": _sell(new_sell),
+            "여유 재고 위치(상위)": src_txt,
+        })
+
+    df = pd.DataFrame(rows)
+
+    def highlight_urgent(row):
+        s = row["현재 품절"]
+        urgent = isinstance(s, str) and s.endswith("일 후") and int(s.replace("일 후", "")) <= 14
+        return ["background-color: #FCE8E9" if urgent else "" for _ in row]
+
+    st.dataframe(df.style.apply(highlight_urgent, axis=1),
+                 hide_index=True, use_container_width=True)
+    st.caption("※ 여유 재고는 세트·기획전 등 다른 페이지에 잡힌 같은 옵션 재고까지 "
+               "합산한 값이라, 실제 이동 가능 수량은 운영 상황에 따라 다를 수 있어요. "
+               "(임직원·테스트·타모델·예약 상품은 제외)")
+
+    # ===== 3. 입고 예정 일정 =====
+    render_restock_section(items)
+
+
+# ====================== 입고 예정 일정 (JSONBin 저장) ======================
+# JSONBin에서 입고일정용 Bin을 새로 만들어 아래에 채우세요(매출 메모와 별도 Bin 권장).
+JSONBIN_RESTOCK = {
+    "bin_id": "6a38fb18f5f4af5e291be484",
+    "api_key": "$2a$10$Ma9Mewe6lm2OO9cUDJ9hfOZ6N0R7KvD4XCc1.oyuWzTH0jsGsDUdy",
+}
+
+
+def load_restocks():
+    cfg = JSONBIN_RESTOCK
+    if cfg["bin_id"] and cfg["api_key"]:
         try:
-            rc = pd.read_csv(reorder_csv)
-            for _, r in rc.iterrows():
-                incoming[str(r["variant_code"]).strip()] = str(r["입고예정일"]).strip()
+            r = requests.get(f'https://api.jsonbin.io/v3/b/{cfg["bin_id"]}/latest',
+                             headers={"X-Master-Key": cfg["api_key"]}, timeout=10)
+            return r.json().get("record", {}).get("restocks", {}) or {}
+        except Exception:
+            return {}
+    return st.session_state.get("_restocks", {})
+
+
+def save_restocks(data):
+    cfg = JSONBIN_RESTOCK
+    if cfg["bin_id"] and cfg["api_key"]:
+        try:
+            requests.put(f'https://api.jsonbin.io/v3/b/{cfg["bin_id"]}',
+                         headers={"X-Master-Key": cfg["api_key"],
+                                  "Content-Type": "application/json"},
+                         json={"restocks": data}, timeout=10)
         except Exception as e:
-            st.warning("발주 일정 CSV 읽기 실패: " + str(e)[:150])
-    inv["입고예정"] = inv["variant_code"].map(lambda v: incoming.get(str(v), ""))
+            st.warning("입고 일정 저장 실패: " + str(e)[:100])
+    st.session_state["_restocks"] = data
 
-    def has_incoming_soon(x):
-        if not x:
-            return False
+
+def project_sellout(stock, rate, restock_list, today):
+    """현재고를 판매속도로 소진하다가 입고일에 입고량을 더해 최종 품절일(오늘로부터 N일)을 계산."""
+    if not rate or rate <= 0:
+        return None
+    events = []
+    for e in restock_list:
         try:
-            return (datetime.strptime(x, "%Y-%m-%d").date() - today).days <= 90
-        except ValueError:
-            return False
-
-    soon = inv[(inv["재고"] > 0) & inv["소진일(30일속도)"].notna() & (inv["소진일(30일속도)"] <= 90)]
-    soon = soon[~soon["입고예정"].apply(has_incoming_soon)]
-    stagnant = inv[(inv["재고"] > 0) & (inv["일판매(30일)"] == 0)]
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("총 품목 수", f"{len(inv):,}")
-    k2.metric("품절(재고 0)", f"{int((inv['재고'] == 0).sum())}개")
-    k3.metric("품절 임박(90일 내)", f"{len(soon)}개")
-    k4.metric("부진 재고(30일 무판매)", f"{len(stagnant)}개")
-
-    st.subheader("품절 임박 경보 (90일 내 소진 · 입고예정 없음)")
-    if not soon.empty:
-        st.dataframe(soon.sort_values("소진일(30일속도)")
-                     [["상품명", "옵션", "재고", "일판매(7일)", "일판매(30일)",
-                       "일판매(90일)", "소진일(30일속도)", "입고예정"]],
-                     use_container_width=True, hide_index=True)
-    else:
-        st.success("90일 내 품절 위험 품목이 없습니다. 👍")
-
-    st.subheader("부진 재고 (재고 있으나 최근 30일 판매 0)")
-    if not stagnant.empty:
-        view = stagnant.sort_values("재고", ascending=False).copy()
-        view["판매중"] = view["판매중"].map(lambda b: "○" if b else "×")
-        st.dataframe(view[["상품명", "옵션", "재고", "일판매(90일)", "판매중"]],
-                     use_container_width=True, hide_index=True)
-    else:
-        st.success("해당 품목이 없습니다.")
-
-    with st.expander("📋 전체 품목 재고 표"):
-        full = inv.copy()
-        full["판매중"] = full["판매중"].map(lambda b: "○" if b else "×")
-        st.dataframe(full[["상품명", "옵션", "재고", "안전재고", "일판매(7일)", "일판매(30일)",
-                           "일판매(90일)", "소진일(30일속도)", "입고예정", "판매중"]]
-                     .sort_values(["상품명", "옵션"]),
-                     use_container_width=True, hide_index=True)
+            dd = datetime.strptime(e["date"], "%Y-%m-%d").date()
+        except (ValueError, KeyError):
+            continue
+        q = float(e.get("qty", 0))
+        if q > 0:
+            events.append(((dd - today).days, q))
+    events.sort()
+    cur = float(stock)
+    t = 0.0
+    for td, q in events:
+        if td < 0:
+            continue
+        if td == 0:
+            cur += q
+            continue
+        if cur / rate < (td - t):       # 입고 전에 소진
+            return round(t + cur / rate)
+        cur -= rate * (td - t)          # 입고일까지 판매
+        cur += q                        # 입고 반영
+        t = td
+    return round(t + cur / rate)
 
 
-# ====================== 라우팅 ======================
+def render_restock_section(items):
+    st.divider()
+    st.header("3. 입고 예정 일정")
+    cfg = JSONBIN_RESTOCK
+    if not (cfg["bin_id"] and cfg["api_key"]):
+        st.info("⚠ JSONBin 설정이 비어 있어 입고 일정이 지금 세션에만 임시 저장됩니다. "
+                "코드 상단 JSONBIN_RESTOCK에 bin_id·api_key를 넣으면 저장되고 팀과 공유돼요.")
+
+    restocks = load_restocks()
+    today = date.today()
+    o248 = [it for it in items if str(it.get("product_no")) == "248"]
+    if not o248:
+        st.caption("248 상품 데이터가 없습니다.")
+        return
+    vc_to_item = {it["variant_code"]: it for it in o248}
+    opt_to_vc = {it["option"]: it["variant_code"] for it in o248}
+
+    # 입고 일정 추가 (옵션 + 캘린더 + 수량)
+    st.markdown("**입고 일정 추가**")
+    c1, c2, c3, c4 = st.columns([3, 1.6, 1.2, 1])
+    sel_opt = c1.selectbox("옵션", list(opt_to_vc.keys()), key="rs_opt",
+                           label_visibility="collapsed")
+    in_date = c2.date_input("입고일", today, key="rs_date", label_visibility="collapsed")
+    in_qty = c3.number_input("수량", min_value=1, value=10, step=1, key="rs_qty",
+                             label_visibility="collapsed")
+    if c4.button("추가", use_container_width=True):
+        vc = opt_to_vc[sel_opt]
+        restocks.setdefault(vc, []).append({"date": str(in_date), "qty": int(in_qty)})
+        save_restocks(restocks)
+        st.rerun()
+
+    # 품절 임박 순 + 입고 반영 품절일
+    rows = []
+    for it in sorted(o248, key=lambda x: x["sellout_30"]
+                     if isinstance(x.get("sellout_30"), (int, float)) else 10**9):
+        vc = it["variant_code"]
+        lst = restocks.get(vc, [])
+        sched = ", ".join(f'{e["date"][5:]}·{e["qty"]}개'
+                          for e in sorted(lst, key=lambda e: e["date"])) or "—"
+        proj = project_sellout(it["stock"], it.get("daily_30", 0), lst, today)
+        rows.append({
+            "옵션": it["option"], "현재고": it["stock"], "30일판매": it.get("daily_30", 0),
+            "현재 품절": _sell(it.get("sellout_30")), "입고 예정": sched,
+            "입고 반영 품절": _sell(proj),
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+    # 등록된 입고 일정 삭제
+    active = {vc: lst for vc, lst in restocks.items() if lst}
+    if active:
+        with st.expander(f"등록된 입고 일정 ({sum(len(v) for v in active.values())}건) · 삭제"):
+            for vc, lst in active.items():
+                label = vc_to_item.get(vc, {}).get("option", vc)
+                for idx, e in enumerate(sorted(lst, key=lambda e: e["date"])):
+                    a1, a2 = st.columns([5, 1])
+                    a1.write(f'{label} — {e["date"]} · {e["qty"]}개')
+                    if a2.button("삭제", key=f"rs_del_{vc}_{idx}"):
+                        restocks[vc].remove(e)
+                        if not restocks[vc]:
+                            del restocks[vc]
+                        save_restocks(restocks)
+                        st.rerun()
+
+
 # ====================== 라우팅 ======================
 if page == "매출 대시보드":
     render_sales(orders)

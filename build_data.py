@@ -8,6 +8,7 @@ HTML 대시보드(GitHub Pages)가 그 JSON을 읽어 화면을 그립니다.
 """
 import json
 import os
+import time
 from collections import Counter
 from datetime import date, datetime, timedelta
 
@@ -236,35 +237,69 @@ def build_inventory(client):
         return c
     s7, s30, s90 = window_qty(7), window_qty(30), window_qty(90)
 
+    def day_qty(target):
+        c = Counter()
+        for o in orders90:
+            if o.get("canceled") == "T":
+                continue
+            if _order_date_obj(o) != target:
+                continue
+            for it in (o.get("items") or []):
+                vc = it.get("variant_code")
+                if not vc:
+                    continue
+                net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
+                if net > 0:
+                    c[vc] += net
+        return c
+    s1 = day_qty(today - timedelta(days=1))  # 어제 하루 판매량
+
     rows = []
-    for p in client.get_all_products():
+    skipped = []
+    products = client.get_all_products()
+    for p in products:
         pno = p.get("product_no")
         pname = p.get("product_name", "")
         try:
             variants = client.get_variants(pno)
-        except Exception:
+        except Exception as e:
+            skipped.append((pno, str(e)[:120]))
             continue
+        time.sleep(0.4)  # 카페24 호출 속도 제한 회피
         for v in variants:
             vc = v.get("variant_code")
             opts = v.get("options")
             optval = opts[0].get("value") if isinstance(opts, list) and opts else ""
             stock = int(to_amount(v.get("quantity")))
+            d1 = s1.get(vc, 0)
+            v7 = round(s7.get(vc, 0) / 7, 2)
             v30 = round(s30.get(vc, 0) / 30, 2)
-            sellout = round(stock / v30) if v30 > 0 else None
+            v90 = round(s90.get(vc, 0) / 90, 2)
+
+            def sellout(rate):
+                return round(stock / rate) if rate > 0 else None
+
             rows.append({
-                "variant_code": vc, "product": pname, "option": optval,
+                "variant_code": vc, "product_no": pno,
+                "product": pname, "option": optval,
                 "stock": stock, "safety": int(to_amount(v.get("safety_inventory"))),
-                "daily_7": round(s7.get(vc, 0) / 7, 2),
-                "daily_30": v30,
-                "daily_90": round(s90.get(vc, 0) / 90, 2),
-                "sellout_days": sellout,
+                "daily_1": d1, "daily_7": v7, "daily_30": v30, "daily_90": v90,
+                "sellout_1": sellout(d1), "sellout_7": sellout(v7),
+                "sellout_30": sellout(v30), "sellout_90": sellout(v90),
+                "sellout_days": sellout(v30),  # 기존 호환
                 "selling": v.get("selling") == "T",
             })
+
+    if skipped:
+        print(f"  ⚠ 재고 조회 실패로 건너뛴 상품 {len(skipped)}개: "
+              + ", ".join(str(s[0]) for s in skipped[:20]))
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "summary": {
             "total": len(rows),
+            "products_ok": len(products) - len(skipped),
+            "products_skipped": len(skipped),
             "out_of_stock": sum(1 for r in rows if r["stock"] == 0),
             "soon": sum(1 for r in rows if r["stock"] > 0 and r["sellout_days"] is not None
                         and r["sellout_days"] <= 90),
