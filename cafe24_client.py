@@ -43,19 +43,35 @@ class Cafe24Client:
         basic = base64.b64encode(
             f"{CLIENT_ID}:{CLIENT_SECRET}".encode()
         ).decode()
-        resp = requests.post(
-            f"{API_BASE}/api/v2/oauth/token",
-            headers={
-                "Authorization": f"Basic {basic}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": self.token["refresh_token"],
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
+        last = None
+        for attempt in range(5):
+            resp = requests.post(
+                f"{API_BASE}/api/v2/oauth/token",
+                headers={
+                    "Authorization": f"Basic {basic}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": self.token["refresh_token"],
+                },
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                break
+            # 카페24 서버 일시 오류(5xx)면 잠깐 쉬고 재시도
+            if resp.status_code >= 500:
+                wait = 2 * (attempt + 1)
+                print(f"토큰 갱신 {resp.status_code} 오류, {wait}초 후 재시도 ({attempt+1}/5)")
+                time.sleep(wait)
+                last = resp
+                continue
+            # 4xx(만료·무효 등)는 재시도 무의미 → 즉시 노출
+            resp.raise_for_status()
+        else:
+            # 5번 재시도 모두 실패
+            if last is not None:
+                last.raise_for_status()
         new_token = resp.json()
         # 카페24 응답에 expires_at이 없으면 직접 계산해서 넣는다 (access token 2시간)
         if not new_token.get("expires_at"):
