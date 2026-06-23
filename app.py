@@ -570,35 +570,56 @@ def render_inventory(orders):
     st.caption("갱신 " + d["generated_at"][:16].replace("T", " ")
                + f" · 전체 {d['summary'].get('total', len(items)):,}개 품목")
 
-    # ===== 1. 오딧 재고 현황 (일반 248 + 플랩 270, 인치별 묶음) =====
+    # ===== 1. 오딧 재고 현황 (모든 오딧 페이지 합산, 인치별 묶음) =====
     st.header("1. 오딧 재고 현황")
-    st.caption("선택 옵션별 재고 · 어제/7·30·90일 판매 · 각 속도 기준 예상 품절일 (🔴 = 30일 기준 14일 내 소진)")
+    st.caption("오딧이 들어간 모든 페이지(248·270·184·세트·기획전 등)의 같은 옵션 재고를 합산. "
+               "재고·판매량은 합계, 품절일은 합산 기준 (🔴 = 30일 기준 14일 내 소진). "
+               "임직원·테스트·타모델·예약 상품은 제외.")
 
-    lookup = {}
+    _EXCLUDE = ["임직원", "테스트", "POP-UP", "PRE-ORDER", "몬딱", "쿼디"]
+
+    def _is_odit(it):
+        t = (it.get("product", "") or "") + " " + (it.get("option", "") or "")
+        return ("오딧" in t) and not any(x in t for x in _EXCLUDE)
+
+    # (인치그룹, 색상) -> 재고·판매량 합산
+    agg = {}
     for it in items:
-        if str(it.get("product_no")) in ("248", "270"):
-            g, c = parse_odit_option(it.get("option", ""))
-            if g and c:
-                lookup[(g, c)] = it
+        if not _is_odit(it):
+            continue
+        g, c = parse_odit_option(it.get("option", ""))
+        if not (g and c):
+            continue
+        a = agg.setdefault((g, c), {"stock": 0, "d1": 0, "d7": 0.0, "d30": 0.0, "d90": 0.0})
+        a["stock"] += it.get("stock", 0)
+        a["d1"] += it.get("daily_1", 0)
+        a["d7"] += it.get("daily_7", 0)
+        a["d30"] += it.get("daily_30", 0)
+        a["d90"] += it.get("daily_90", 0)
+
+    def _so(stock, rate):
+        return round(stock / rate) if rate and rate > 0 else None
 
     for group in ODIT_GROUPS:
         st.markdown(f"#### {group}")
         rows = []
         for color in ODIT_COLORS:
-            it = lookup.get((group, color))
-            if it:
-                s30 = it.get("sellout_30")
+            a = agg.get((group, color))
+            if a and (a["stock"] or a["d30"]):
+                s7 = _so(a["stock"], a["d7"])
+                s30 = _so(a["stock"], a["d30"])
+                s90 = _so(a["stock"], a["d90"])
                 urgent = isinstance(s30, (int, float)) and s30 <= 14
                 rows.append({
                     "색상": ("🔴 " if urgent else "") + color,
-                    "재고": it.get("stock", 0),
-                    "어제": it.get("daily_1", 0),
-                    "7일": it.get("daily_7", 0),
-                    "30일": it.get("daily_30", 0),
-                    "90일": it.get("daily_90", 0),
-                    "품절(7일속도)": _sell(it.get("sellout_7")),
+                    "재고": a["stock"],
+                    "어제": round(a["d1"], 1),
+                    "7일": round(a["d7"], 2),
+                    "30일": round(a["d30"], 2),
+                    "90일": round(a["d90"], 2),
+                    "품절(7일속도)": _sell(s7),
                     "품절(30일속도)": _sell(s30),
-                    "품절(90일속도)": _sell(it.get("sellout_90")),
+                    "품절(90일속도)": _sell(s90),
                 })
             else:
                 rows.append({"색상": color, "재고": "", "어제": "", "7일": "", "30일": "",
@@ -810,15 +831,20 @@ def render_restock_section(items):
     alloc_sum_hint = "배분 합계가 총 입고수량과 다르면, 표시는 되지만 페이지 반영은 배분수량 기준입니다."
     st.caption(alloc_sum_hint)
 
+    # 입고 일정 키 -> 사람이 읽는 옵션명
+    vc_name = {it["variant_code"]: it.get("option", "") for it in targets}
+
+    def okey_label(okey):
+        parts = okey.split("|")
+        if len(parts) == 3:           # 새 형식: 그룹|플랩|색상
+            return f"{parts[0]} {parts[2]}"
+        # 옛 형식: variant_code 로 저장된 경우 → 실제 옵션명으로 변환
+        return vc_name.get(okey, okey)
+
     # 등록된 입고 일정 (옵션별 · 페이지 배분)
     rows = []
     for okey, lst in restocks.items():
-        parts = okey.split("|")
-        if len(parts) == 3:
-            g, _flap, c = parts
-            opt_name = f"{g} {c}"
-        else:
-            opt_name = okey
+        opt_name = okey_label(okey)
         for e in sorted(lst, key=lambda e: e.get("date", "")):
             al = e.get("alloc", {})
             rows.append({
@@ -833,8 +859,7 @@ def render_restock_section(items):
 
         with st.expander("입고 일정 삭제"):
             for okey, lst in list(restocks.items()):
-                parts = okey.split("|")
-                opt_name = f"{parts[0]} {parts[2]}" if len(parts) == 3 else okey
+                opt_name = okey_label(okey)
                 for idx, e in enumerate(sorted(lst, key=lambda e: e.get("date", ""))):
                     al = e.get("alloc", {})
                     a1, a2 = st.columns([5, 1])
