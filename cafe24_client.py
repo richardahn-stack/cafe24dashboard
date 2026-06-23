@@ -3,7 +3,7 @@ import base64
 import json
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -56,8 +56,14 @@ class Cafe24Client:
             timeout=30,
         )
         resp.raise_for_status()
-        self.token = resp.json()
+        new_token = resp.json()
+        # 카페24 응답에 expires_at이 없으면 직접 계산해서 넣는다 (access token 2시간)
+        if not new_token.get("expires_at"):
+            exp = datetime.now(timezone.utc) + timedelta(hours=2)
+            new_token["expires_at"] = exp.isoformat()
+        self.token = new_token
         self._save_token()
+        print("토큰 갱신 완료 (새 만료시각:", new_token.get("expires_at"), ")")
 
     def _headers(self):
         if self._is_expired():
