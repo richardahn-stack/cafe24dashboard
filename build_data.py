@@ -177,6 +177,26 @@ def build_product(client):
     model_amount = Counter()    # 캐리어 모델 -> 매출
     product_sales = {}          # 상품명 -> {qty, amount, orders}
     option_daily = {}           # "상품·옵션" -> {date: qty}
+    cat_daily = {}              # 날짜 -> {대분류: 매출}
+    odit_daily = {}             # "인치그룹·색상" -> {date: qty}  (오딧 전 페이지 합산)
+
+    import re as _re
+    _ODIT_COLORS = ["화이트", "실버", "다크그레이", "블랙", "솔티블루",
+                    "펄스레드", "아이시핑크", "웻그린"]
+    _EXCLUDE = ["임직원", "테스트", "POP-UP", "PRE-ORDER", "몬딱", "쿼디"]
+
+    def _odit_key(pname, opt):
+        text = (pname or "") + " " + (opt or "")
+        if "오딧" not in text or any(x in text for x in _EXCLUDE):
+            return None
+        m = _re.search(r"(\d+)\s*인치", opt or "")
+        if not m:
+            return None
+        flap = "플랩" in (opt or "")
+        group = f"{m.group(1)}인치 플랩" if flap else f"{m.group(1)}인치"
+        norm = _re.sub(r"\(.*?\)", "", opt or "").replace("아이시 핑크", "아이시핑크")
+        color = next((c for c in _ODIT_COLORS if c in norm), None)
+        return f"{group}·{color}" if color else None
 
     for o in orders:
         if o.get("canceled") == "T":
@@ -187,7 +207,8 @@ def build_product(client):
             if net <= 0:
                 continue
             amt = (to_amount(it.get("product_price")) + to_amount(it.get("option_price"))) * net
-            대, 중, 태그, _ = classify(it.get("product_name", ""), option_label(it))
+            opt = option_label(it)
+            대, 중, 태그, _ = classify(it.get("product_name", ""), opt)
             cat_amount[대] += amt
             cat_qty[대] += net
             if 대 == "캐리어":
@@ -196,10 +217,16 @@ def build_product(client):
             ps = product_sales.setdefault(pname, {"qty": 0, "amount": 0.0})
             ps["qty"] += net
             ps["amount"] += amt
-            label = f"{pname} · {option_label(it)}"
+            label = f"{pname} · {opt}"
             if d:
                 option_daily.setdefault(label, {}).setdefault(d, 0)
                 option_daily[label][d] += net
+                cat_daily.setdefault(d, {}).setdefault(대, 0.0)
+                cat_daily[d][대] += amt
+                ok = _odit_key(pname, opt)
+                if ok:
+                    odit_daily.setdefault(ok, {}).setdefault(d, 0)
+                    odit_daily[ok][d] += net
 
     ranking = sorted(
         ({"name": k, "qty": v["qty"], "amount": round(v["amount"])}
@@ -216,6 +243,9 @@ def build_product(client):
         "carrier_models": {k: round(v) for k, v in model_amount.most_common()},
         "ranking": ranking,
         "option_daily": option_daily,
+        "cat_daily": {d: {k: round(v) for k, v in cats.items()}
+                      for d, cats in sorted(cat_daily.items())},
+        "odit_daily": odit_daily,
     }
 
 
