@@ -36,8 +36,11 @@ class Cafe24Client:
             exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
         except ValueError:
             return True
+        # 시간대 정보가 없으면 UTC로 간주 (우리는 항상 UTC로 저장함)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
         # 만료 1분 전에 미리 갱신
-        return datetime.now(exp.tzinfo) >= exp - timedelta(minutes=1)
+        return datetime.now(timezone.utc) >= exp - timedelta(minutes=1)
 
     def _refresh(self):
         basic = base64.b64encode(
@@ -73,13 +76,13 @@ class Cafe24Client:
             if last is not None:
                 last.raise_for_status()
         new_token = resp.json()
-        # 카페24 응답에 expires_at이 없으면 직접 계산해서 넣는다 (access token 2시간)
-        if not new_token.get("expires_at"):
-            exp = datetime.now(timezone.utc) + timedelta(hours=2)
-            new_token["expires_at"] = exp.isoformat()
+        # 카페24가 주는 expires_at은 시간대 표시 없는 KST라 신뢰하지 않고,
+        # 항상 UTC 기준으로 직접 계산해 저장한다 (access token 2시간, 안전 여유 1h50m)
+        exp = datetime.now(timezone.utc) + timedelta(hours=1, minutes=50)
+        new_token["expires_at"] = exp.isoformat()
         self.token = new_token
         self._save_token()
-        print("토큰 갱신 완료 (새 만료시각:", new_token.get("expires_at"), ")")
+        print("토큰 갱신 완료 (새 만료시각 UTC:", new_token["expires_at"], ")")
 
     def _headers(self):
         if self._is_expired():

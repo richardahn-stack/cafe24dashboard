@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write          # 갱신된 data/*.json·token.json 을 저장소에 다시 커밋하기 위함
 
+# 한 번에 하나만 실행 (새로고침 버튼 중복·스케줄 겹침으로 인한 토큰 갱신 충돌 방지)
+concurrency:
+  group: build-dashboard
+  cancel-in-progress: false   # 진행 중인 실행은 끝까지 두고, 새 요청은 대기열에서 기다림
+
 jobs:
   build:
     runs-on: ubuntu-latest

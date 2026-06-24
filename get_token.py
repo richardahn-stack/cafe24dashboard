@@ -49,10 +49,10 @@ def main():
     resp.raise_for_status()
     token = resp.json()
 
-    # access token 만료시각이 없으면 직접 계산 (2시간) — 자동 갱신 판단에 필요
-    if not token.get("expires_at"):
-        from datetime import datetime, timedelta, timezone
-        token["expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    # 카페24가 주는 expires_at은 시간대 없는 KST라 신뢰하지 않고 UTC로 직접 계산
+    from datetime import datetime, timedelta, timezone
+    token["expires_at"] = (datetime.now(timezone.utc)
+                           + timedelta(hours=1, minutes=50)).isoformat()
 
     with open(TOKEN_FILE, "w", encoding="utf-8") as f:
         json.dump(token, f, indent=2, ensure_ascii=False)
