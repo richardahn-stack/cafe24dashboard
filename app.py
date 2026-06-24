@@ -219,7 +219,32 @@ with st.sidebar:
     page = st.radio("대시보드 이동",
                     ["매출 대시보드", "상품 대시보드", "재고 대시보드"])
     st.divider()
-    st.caption("데이터는 매일 아침 자동으로 갱신됩니다.")
+
+    # ── 데이터 새로고침: GitHub Actions 원격 실행 ──
+    st.caption("데이터는 매일 자동 갱신돼요. 지금 바로 최신화하려면 아래 버튼을 누르세요.")
+    if st.button("🔄 지금 데이터 새로고침", use_container_width=True):
+        gh = st.secrets.get("GITHUB_TOKEN", "")
+        repo = st.secrets.get("GITHUB_REPO", "richardahn-stack/cafe24dashboard")
+        if not gh:
+            st.error("GitHub 토큰이 설정되지 않았어요. Streamlit Secrets에 GITHUB_TOKEN을 추가하세요.")
+        else:
+            try:
+                r = requests.post(
+                    f"https://api.github.com/repos/{repo}/actions/workflows/build.yml/dispatches",
+                    headers={"Authorization": f"Bearer {gh}",
+                             "Accept": "application/vnd.github+json"},
+                    json={"ref": "main"}, timeout=20)
+                if r.status_code == 204:
+                    st.success("새로고침 요청 완료! 약 2~3분 뒤 데이터가 갱신돼요. "
+                               "잠시 후 페이지를 새로고침하세요.")
+                else:
+                    st.error(f"요청 실패 ({r.status_code}). 토큰 권한(workflow)을 확인하세요.")
+            except Exception as e:
+                st.error(f"요청 중 오류: {e}")
+
+    if st.button("↻ 화면 다시 읽기", use_container_width=True):
+        load_data_json.clear()   # 캐시 비우고 최신 JSON 다시 읽기
+        st.rerun()
 
 orders = None  # 모든 탭이 data/*.json을 읽음 (카페24 토큰 불필요)
 
