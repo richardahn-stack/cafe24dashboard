@@ -702,10 +702,14 @@ def render_inventory(orders):
 
     PAGE_NAMES = {"248": "오딧 캐리어", "270": "오딧 플랩 캐리어", "184": "세트할인 오딧/플랩 캐리어"}
     for pno in ["248", "270", "184"]:
-        sub = [it for it in items if str(it.get("product_no")) == pno and it.get("stock", 0) > 0]
+        sub = [it for it in items if str(it.get("product_no")) == pno]
         if not sub:
             continue
-        sub.sort(key=sort_key)
+        # 184는 카페24 옵션 등록 순서(variant_code 순), 나머지는 품절 임박 순
+        if pno == "184":
+            sub.sort(key=lambda it: it.get("variant_code", ""))
+        else:
+            sub.sort(key=sort_key)
         st.markdown(f"#### {PAGE_NAMES.get(pno, '')} (no.{pno})")
         rows = []
         for it in sub:
