@@ -281,50 +281,99 @@ def render_sales(orders):
     st.caption(f'{p["start"]} ~ {p["end"]} (최근 {p["days"]}일) · 갱신 '
                + d["generated_at"][:16].replace("T", " "))
 
-    # ===== 월별 추세 (data/monthly 누적 데이터) =====
+    # ===== 매출·판매 추세 (data/monthly 누적 데이터, 일/주/월 단위) =====
     monthly = load_monthly()
     if monthly:
-        st.subheader("월별 추세")
-        months = sorted(monthly.keys())
+        st.subheader("매출 · 판매 추세")
 
-        # 1) 월별 매출 — 꺾은선
-        amt = [monthly[m].get("summary", {}).get("total_amount", 0) for m in months]
-        figm = go.Figure()
-        figm.add_trace(go.Scatter(
-            x=months, y=amt, mode="lines+markers+text",
-            text=[f"{a/1e8:.1f}억" for a in amt], textposition="top center",
-            line=dict(color="#378ADD", width=3), marker=dict(size=8)))
-        figm.update_layout(
-            height=300, margin=dict(t=30, b=10, l=10, r=10),
-            title="월별 매출", plot_bgcolor="white",
-            yaxis=dict(gridcolor="#EEF1F5", tickformat=",", title="매출(원)"))
-        st.plotly_chart(figm, use_container_width=True, config={"displayModeBar": False})
-
-        # 2) 오딧 인치별 판매량 — 누적 막대 (월별 비중)
+        # 월별 파일 → 일자별 총매출 / 일자별 인치별 판매량으로 펼치기
         ODIT_INCH = ["20인치", "24인치", "26인치", "29인치", "20인치 플랩"]
         INCH_HEX = {"20인치": "#9BD0F5", "24인치": "#3F72AF", "26인치": "#E0A800",
                     "29인치": "#E5484D", "20인치 플랩": "#3FA972"}
-        inch_by_month = {g: [] for g in ODIT_INCH}
-        for m in months:
-            od = monthly[m].get("odit_daily", {})
-            tot = {g: 0 for g in ODIT_INCH}
-            for key, daymap in od.items():
+        daily_amt = {}                       # 'YYYY-MM-DD' -> 총매출
+        daily_inch = {}                      # 'YYYY-MM-DD' -> {인치: 수량}
+        for m, md in monthly.items():
+            for dt, cats in md.get("cat_daily", {}).items():
+                daily_amt[dt] = daily_amt.get(dt, 0) + sum(cats.values())
+            for key, daymap in md.get("odit_daily", {}).items():
                 grp = key.split("·")[0]
-                if grp in tot:
-                    for v in daymap.values():
-                        tot[grp] += v.get("q", 0) if isinstance(v, dict) else (v or 0)
-            for g in ODIT_INCH:
-                inch_by_month[g].append(tot[g])
-        figi = go.Figure()
-        for g in ODIT_INCH:
-            figi.add_trace(go.Bar(x=months, y=inch_by_month[g], name=g,
-                                  marker_color=INCH_HEX[g]))
-        figi.update_layout(
-            barmode="stack", height=320, margin=dict(t=30, b=10, l=10, r=10),
-            title="오딧 인치별 월 판매량 (누적)", plot_bgcolor="white",
-            yaxis=dict(gridcolor="#EEF1F5", title="판매수량"),
-            legend=dict(orientation="h", y=1.12))
-        st.plotly_chart(figi, use_container_width=True, config={"displayModeBar": False})
+                if grp not in ODIT_INCH:
+                    continue
+                for dt, v in daymap.items():
+                    q = v.get("q", 0) if isinstance(v, dict) else (v or 0)
+                    daily_inch.setdefault(dt, {}).setdefault(grp, 0)
+                    daily_inch[dt][grp] += q
+
+        all_days = sorted(daily_amt.keys())
+        if all_days:
+            dmin = date.fromisoformat(all_days[0])
+            dmax = date.fromisoformat(all_days[-1])
+
+            # --- 기간 필터 + 집계 단위 ---
+            fc1, fc2 = st.columns([2, 1])
+            with fc1:
+                rng = st.date_input("기간", (dmin, dmax), min_value=dmin,
+                                    max_value=dmax, key="trend_range")
+            with fc2:
+                unit = st.radio("단위", ["일", "주", "월"], horizontal=True,
+                                index=2, key="trend_unit")
+            if isinstance(rng, tuple) and len(rng) == 2:
+                d_from, d_to = rng
+            else:
+                d_from = d_to = rng if not isinstance(rng, tuple) else dmin
+
+            # --- 기간 내 날짜만 추려서 버킷(일/주/월)으로 묶기 ---
+            def bucket(dt_str):
+                dd = date.fromisoformat(dt_str)
+                if unit == "일":
+                    return dt_str
+                if unit == "월":
+                    return dt_str[:7]                       # YYYY-MM
+                iso = dd.isocalendar()                      # 주: ISO 연-주
+                return f"{iso[0]}-W{iso[1]:02d}"
+
+            amt_b, inch_b = {}, {}
+            for dt in all_days:
+                dd = date.fromisoformat(dt)
+                if not (d_from <= dd <= d_to):
+                    continue
+                b = bucket(dt)
+                amt_b[b] = amt_b.get(b, 0) + daily_amt.get(dt, 0)
+                for g, q in daily_inch.get(dt, {}).items():
+                    inch_b.setdefault(b, {}).setdefault(g, 0)
+                    inch_b[b][g] += q
+            buckets = sorted(amt_b.keys())
+
+            if not buckets:
+                st.caption("선택한 기간에 데이터가 없어요.")
+            else:
+                # 1) 매출 — 꺾은선
+                vals = [amt_b[b] for b in buckets]
+                figm = go.Figure()
+                figm.add_trace(go.Scatter(
+                    x=buckets, y=vals, mode="lines+markers",
+                    line=dict(color="#378ADD", width=3), marker=dict(size=7),
+                    hovertemplate="%{x}<br>%{y:,.0f}원<extra></extra>"))
+                figm.update_layout(
+                    height=300, margin=dict(t=30, b=10, l=10, r=10),
+                    title=f"{unit}별 매출", plot_bgcolor="white",
+                    yaxis=dict(gridcolor="#EEF1F5", tickformat=",", title="매출(원)"))
+                st.plotly_chart(figm, use_container_width=True,
+                                config={"displayModeBar": False})
+
+                # 2) 오딧 인치별 판매량 — 누적 막대
+                figi = go.Figure()
+                for g in ODIT_INCH:
+                    figi.add_trace(go.Bar(
+                        x=buckets, y=[inch_b.get(b, {}).get(g, 0) for b in buckets],
+                        name=g, marker_color=INCH_HEX[g]))
+                figi.update_layout(
+                    barmode="stack", height=320, margin=dict(t=30, b=10, l=10, r=10),
+                    title=f"오딧 인치별 {unit} 판매량 (누적)", plot_bgcolor="white",
+                    yaxis=dict(gridcolor="#EEF1F5", title="판매수량"),
+                    legend=dict(orientation="h", y=1.12))
+                st.plotly_chart(figi, use_container_width=True,
+                                config={"displayModeBar": False})
         st.divider()
 
     # ----- 디자인 스타일 (화이트 카드 + 블루 포인트) -----
