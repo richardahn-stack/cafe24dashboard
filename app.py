@@ -540,16 +540,10 @@ def render_sales(orders):
 # ======================================================================
 def render_product(orders):
     st.title("오딧 캐리어 대시보드")
-    try:
-        d = load_data_json("product.json")
-    except Exception:
-        st.info("아직 상품 데이터가 없어요. (data/product.json 생성 필요 — 새로고침 버튼/Actions)")
-        return
-    st.caption("갱신 " + d["generated_at"][:16].replace("T", " "))
 
-    odit_daily = d.get("odit_daily", {})
-    if not odit_daily:
-        st.info("오딧 판매 데이터가 아직 없어요. (build_data.py 갱신 후 데이터 재생성 필요)")
+    monthly = load_monthly()
+    if not monthly:
+        st.info("월별 누적 데이터가 없어요. (data/monthly/*.json 필요 — backfill 후 push)")
         return
 
     COLOR_HEX = {
@@ -561,73 +555,60 @@ def render_product(orders):
         "29인치": "#E5484D", "20인치 플랩": "#3FA972",
     }
 
-    # 값 헬퍼: 새 구조 {"q":수량,"a":금액} / 옛 구조 숫자(수량만) 모두 대응
-    def qof(v):
-        return v.get("q", 0) if isinstance(v, dict) else (v or 0)
+    # 월별 파일 → 일자별 (인치,색상) -> {q,a} 로 펼치기
+    daily = {}   # 'YYYY-MM-DD' -> {(grp,color): {q,a}}
+    for m, md in monthly.items():
+        for key, daymap in md.get("odit_daily", {}).items():
+            grp, _, color = key.partition("·")
+            for dt, v in daymap.items():
+                q = v.get("q", 0) if isinstance(v, dict) else (v or 0)
+                a = v.get("a", 0) if isinstance(v, dict) else 0
+                cell = daily.setdefault(dt, {}).setdefault((grp, color), {"q": 0, "a": 0})
+                cell["q"] += q
+                cell["a"] += a
 
-    def aof(v):
-        return v.get("a", 0) if isinstance(v, dict) else 0
-
-    def parse_key(k):
-        grp, _, color = k.partition("·")
-        return grp, color
-
-    all_dates = sorted({dt for m in odit_daily.values() for dt in m})
-    if not all_dates:
-        st.info("판매 일자 데이터가 없어요.")
+    all_days = sorted(daily.keys())
+    if not all_days:
+        st.info("오딧 판매 일자 데이터가 없어요.")
         return
-    dmin = date.fromisoformat(all_dates[0])
-    dmax = date.fromisoformat(all_dates[-1])
+    dmin = date.fromisoformat(all_days[0])
+    dmax = date.fromisoformat(all_days[-1])
 
-    # 기간 합계 집계: 날짜 범위 -> {(인치,색상): {q, a}}
-    def aggregate(d_from, d_to):
-        agg = {}
-        for k, m in odit_daily.items():
-            grp, color = parse_key(k)
-            for dt, v in m.items():
-                dd = date.fromisoformat(dt)
-                if d_from <= dd <= d_to:
-                    a = agg.setdefault((grp, color), {"q": 0, "a": 0})
-                    a["q"] += qof(v)
-                    a["a"] += aof(v)
-        return agg
-
-    # ============================================================
-    # 1. 인치별 / 컬러별 판매 비율
-    # ============================================================
-    st.header("1. 오딧 캐리어 인치별 / 컬러별 판매")
-
-    # 기간 선택: 기본 최근 7일, 날짜 필터 제공
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        preset = st.radio("기간", ["최근 7일", "최근 14일", "최근 30일", "직접 선택"],
-                          horizontal=True, key="odit_preset")
-    if preset == "직접 선택":
-        with c2:
-            rng = st.date_input("기간 선택", (max(dmin, dmax - timedelta(days=6)), dmax),
-                                min_value=dmin, max_value=dmax, key="odit_range")
-        if isinstance(rng, tuple) and len(rng) == 2:
-            cur_from, cur_to = rng
-        else:
-            cur_from, cur_to = (rng, rng) if not isinstance(rng, tuple) else (dmin, dmax)
+    # ===== 최상단: 기간 필터 + 단위 =====
+    fc1, fc2 = st.columns([2, 1])
+    with fc1:
+        rng = st.date_input("기간", (max(dmin, dmax - timedelta(days=6)), dmax),
+                            min_value=dmin, max_value=dmax, key="prod_range")
+    with fc2:
+        unit = st.radio("단위", ["일", "주", "월"], horizontal=True, index=0, key="prod_unit")
+    if isinstance(rng, tuple) and len(rng) == 2:
+        cur_from, cur_to = rng
     else:
-        days = {"최근 7일": 7, "최근 14일": 14, "최근 30일": 30}[preset]
-        cur_to = dmax
-        cur_from = max(dmin, dmax - timedelta(days=days - 1))
-
+        cur_from = cur_to = rng if not isinstance(rng, tuple) else (dmin)
     span = (cur_to - cur_from).days + 1
     prev_to = cur_from - timedelta(days=1)
     prev_from = prev_to - timedelta(days=span - 1)
+    st.caption(f"현재 기간: {cur_from} ~ {cur_to} ({span}일)  ·  비교 기간: {prev_from} ~ {prev_to}")
 
-    st.caption(f"현재 기간: {cur_from} ~ {cur_to} ({span}일)  ·  "
-               f"비교 기간: {prev_from} ~ {prev_to}")
+    def aggregate(d_from, d_to):
+        agg = {}
+        for dt in all_days:
+            dd = date.fromisoformat(dt)
+            if d_from <= dd <= d_to:
+                for (grp, color), cell in daily[dt].items():
+                    a = agg.setdefault((grp, color), {"q": 0, "a": 0})
+                    a["q"] += cell["q"]
+                    a["a"] += cell["a"]
+        return agg
 
     cur = aggregate(cur_from, cur_to)
     prev = aggregate(prev_from, prev_to)
 
-    # --- 파이차트 2개 (인치별 / 컬러별 수량 비중) ---
-    inch_q = {}
-    color_q = {}
+    # ============================================================
+    # 1. 인치별 / 컬러별 판매 비율
+    # ============================================================
+    st.header("1. 인치별 / 컬러별 판매")
+    inch_q, color_q = {}, {}
     for (grp, color), a in cur.items():
         inch_q[grp] = inch_q.get(grp, 0) + a["q"]
         color_q[color] = color_q.get(color, 0) + a["q"]
@@ -640,8 +621,7 @@ def render_product(orders):
             fig = px.pie(values=[inch_q[g] for g in inchs], names=inchs, hole=0.5,
                          color=inchs, color_discrete_map=INCH_HEX)
             fig.update_traces(textinfo="percent+label")
-            fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
-                              showlegend=False)
+            fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         else:
             st.caption("이 기간 판매 없음")
@@ -652,14 +632,12 @@ def render_product(orders):
             fig = px.pie(values=[color_q[c] for c in cols], names=cols, hole=0.5,
                          color=cols, color_discrete_map=COLOR_HEX)
             fig.update_traces(textinfo="percent+label")
-            fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
-                              showlegend=False)
+            fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         else:
             st.caption("이 기간 판매 없음")
 
-    # --- 비교 표 (인치별 / 컬러별: 수량·매출·객단가 + 전기간 대비) ---
-    def build_compare(dim):  # dim: "inch" or "color"
+    def build_compare(dim):
         cur_d, prev_d = {}, {}
         for (grp, color), a in cur.items():
             key = grp if dim == "inch" else color
@@ -670,19 +648,16 @@ def render_product(orders):
         order = ODIT_GROUPS if dim == "inch" else ODIT_COLORS
         rows = []
         for key in order:
-            cq = cur_d.get(key, {}).get("q", 0)
-            ca = cur_d.get(key, {}).get("a", 0)
+            cq = cur_d.get(key, {}).get("q", 0); ca = cur_d.get(key, {}).get("a", 0)
             pq = prev_d.get(key, {}).get("q", 0)
             if cq == 0 and ca == 0 and pq == 0:
                 continue
             aov = ca / cq if cq else 0
             dq = cq - pq
             arrow = "▲" if dq > 0 else ("▼" if dq < 0 else "─")
-            rows.append({
-                ("인치" if dim == "inch" else "컬러"): key,
-                "판매수량": cq, "판매액": ca, "객단가": round(aov),
-                "전기간": pq, "증감": f"{arrow} {dq:+d}",
-            })
+            rows.append({("인치" if dim == "inch" else "컬러"): key,
+                         "판매수량": cq, "판매액": ca, "객단가": round(aov),
+                         "전기간": pq, "증감": f"{arrow} {dq:+d}"})
         return pd.DataFrame(rows)
 
     def style_cmp(df):
@@ -706,48 +681,44 @@ def render_product(orders):
         st.dataframe(style_cmp(color_df), hide_index=True, use_container_width=True)
 
     # ============================================================
-    # 2. 인치별 / 컬러별 판매 트렌드
+    # 2. 판매 트렌드 (기간·단위 연동)
     # ============================================================
     st.divider()
     st.header("2. 인치별 / 컬러별 판매 트렌드")
-    st.caption("인치·컬러를 선택해 일자별 판매 수량 추이를 봅니다. '전체'를 고르면 모두 합산해요.")
+    st.caption("위 기간·단위를 따릅니다. 인치·컬러를 선택해 추이를 봐요('전체' 가능).")
 
     tc1, tc2 = st.columns(2)
-    sel_inch = tc1.multiselect("인치 선택", ["전체"] + ODIT_GROUPS, default=["전체"],
-                               key="trend_inch")
-    sel_color = tc2.multiselect("컬러 선택", ["전체"] + ODIT_COLORS, default=["전체"],
-                                key="trend_color")
+    sel_inch = tc1.multiselect("인치 선택", ["전체"] + ODIT_GROUPS, default=["전체"], key="ptrend_inch")
+    sel_color = tc2.multiselect("컬러 선택", ["전체"] + ODIT_COLORS, default=["전체"], key="ptrend_color")
     inch_set = ODIT_GROUPS if ("전체" in sel_inch or not sel_inch) else sel_inch
     color_set = ODIT_COLORS if ("전체" in sel_color or not sel_color) else sel_color
 
-    # 최근 30일 추이 (필터 조건에 맞는 옵션 합산)
-    trend_dates = all_dates[-30:]
-    series = {dt: 0 for dt in trend_dates}
-    for k, m in odit_daily.items():
-        grp, color = parse_key(k)
-        if grp in inch_set and color in color_set:
-            for dt in trend_dates:
-                if dt in m:
-                    series[dt] += qof(m[dt])
-    tdf = pd.DataFrame({"날짜": trend_dates, "판매수량": [series[dt] for dt in trend_dates]})
-    tdf = tdf.set_index("날짜")
-    st.line_chart(tdf)
+    def bucket(dt_str):
+        dd = date.fromisoformat(dt_str)
+        if unit == "일":
+            return dt_str
+        if unit == "월":
+            return dt_str[:7]
+        iso = dd.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
 
-    # 선택 인치별로 나눠 보기 (컬러는 합산) — 인치별 비교 라인
-    if "전체" in sel_inch or len(inch_set) > 1:
-        st.markdown("**인치별 추이 비교**")
-        multi = {}
-        for g in inch_set:
-            row = []
-            for dt in trend_dates:
-                s = 0
-                for k, m in odit_daily.items():
-                    kg, kc = parse_key(k)
-                    if kg == g and kc in color_set and dt in m:
-                        s += qof(m[dt])
-                row.append(s)
-            multi[g] = row
-        st.line_chart(pd.DataFrame(multi, index=trend_dates))
+    series = {}
+    for dt in all_days:
+        dd = date.fromisoformat(dt)
+        if not (cur_from <= dd <= cur_to):
+            continue
+        b = bucket(dt)
+        s = 0
+        for (grp, color), cell in daily[dt].items():
+            if grp in inch_set and color in color_set:
+                s += cell["q"]
+        series[b] = series.get(b, 0) + s
+    buckets = sorted(series.keys())
+    if buckets:
+        tdf = pd.DataFrame({"구간": buckets, "판매수량": [series[b] for b in buckets]}).set_index("구간")
+        st.line_chart(tdf)
+    else:
+        st.caption("선택한 기간·옵션에 데이터가 없어요.")
 
 
 # ======================================================================
