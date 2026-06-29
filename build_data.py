@@ -23,7 +23,7 @@ def now_kst():
     return datetime.now(KST).isoformat(timespec="seconds")
 
 OUT_DIR = "data"
-PERIOD_DAYS = 30  # 분석 기간 (일). 직전 동일 기간과 비교.
+PERIOD_DAYS = 90  # 분석 기간 (일). 직전 동일 기간과 비교. 날짜 필터 비교용으로 넉넉히 확보.
 
 
 # ---------- 공통 헬퍼 ----------
@@ -225,8 +225,9 @@ def build_product(client):
                 cat_daily[d][대] += amt
                 ok = _odit_key(pname, opt)
                 if ok:
-                    odit_daily.setdefault(ok, {}).setdefault(d, 0)
-                    odit_daily[ok][d] += net
+                    e = odit_daily.setdefault(ok, {}).setdefault(d, {"q": 0, "a": 0.0})
+                    e["q"] += net
+                    e["a"] += amt
 
     ranking = sorted(
         ({"name": k, "qty": v["qty"], "amount": round(v["amount"])}
@@ -245,7 +246,8 @@ def build_product(client):
         "option_daily": option_daily,
         "cat_daily": {d: {k: round(v) for k, v in cats.items()}
                       for d, cats in sorted(cat_daily.items())},
-        "odit_daily": odit_daily,
+        "odit_daily": {k: {d: {"q": e["q"], "a": round(e["a"])} for d, e in m.items()}
+                       for k, m in odit_daily.items()},
     }
 
 
