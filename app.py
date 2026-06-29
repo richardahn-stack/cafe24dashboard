@@ -164,6 +164,21 @@ def load_data_json(name):
         return json.load(f)
 
 
+@st.cache_data(ttl=300)
+def load_monthly():
+    """data/monthly/*.json 을 모두 읽어 {'2026-01': {...}, ...} 로 반환."""
+    import glob
+    out = {}
+    for path in sorted(glob.glob(os.path.join("data", "monthly", "*.json"))):
+        ym = os.path.basename(path)[:-5]  # '2026-01.json' -> '2026-01'
+        try:
+            with open(path, encoding="utf-8") as f:
+                out[ym] = json.load(f)
+        except Exception:
+            pass
+    return out
+
+
 @st.cache_data(ttl=600, show_spinner="카페24에서 주문 데이터를 가져오는 중...")
 def load_orders(start, end):
     return Cafe24Client().get_orders(start, end)
@@ -265,6 +280,52 @@ def render_sales(orders):
     p = d["period"]
     st.caption(f'{p["start"]} ~ {p["end"]} (최근 {p["days"]}일) · 갱신 '
                + d["generated_at"][:16].replace("T", " "))
+
+    # ===== 월별 추세 (data/monthly 누적 데이터) =====
+    monthly = load_monthly()
+    if monthly:
+        st.subheader("월별 추세")
+        months = sorted(monthly.keys())
+
+        # 1) 월별 매출 — 꺾은선
+        amt = [monthly[m].get("summary", {}).get("total_amount", 0) for m in months]
+        figm = go.Figure()
+        figm.add_trace(go.Scatter(
+            x=months, y=amt, mode="lines+markers+text",
+            text=[f"{a/1e8:.1f}억" for a in amt], textposition="top center",
+            line=dict(color="#378ADD", width=3), marker=dict(size=8)))
+        figm.update_layout(
+            height=300, margin=dict(t=30, b=10, l=10, r=10),
+            title="월별 매출", plot_bgcolor="white",
+            yaxis=dict(gridcolor="#EEF1F5", tickformat=",", title="매출(원)"))
+        st.plotly_chart(figm, use_container_width=True, config={"displayModeBar": False})
+
+        # 2) 오딧 인치별 판매량 — 누적 막대 (월별 비중)
+        ODIT_INCH = ["20인치", "24인치", "26인치", "29인치", "20인치 플랩"]
+        INCH_HEX = {"20인치": "#9BD0F5", "24인치": "#3F72AF", "26인치": "#E0A800",
+                    "29인치": "#E5484D", "20인치 플랩": "#3FA972"}
+        inch_by_month = {g: [] for g in ODIT_INCH}
+        for m in months:
+            od = monthly[m].get("odit_daily", {})
+            tot = {g: 0 for g in ODIT_INCH}
+            for key, daymap in od.items():
+                grp = key.split("·")[0]
+                if grp in tot:
+                    for v in daymap.values():
+                        tot[grp] += v.get("q", 0) if isinstance(v, dict) else (v or 0)
+            for g in ODIT_INCH:
+                inch_by_month[g].append(tot[g])
+        figi = go.Figure()
+        for g in ODIT_INCH:
+            figi.add_trace(go.Bar(x=months, y=inch_by_month[g], name=g,
+                                  marker_color=INCH_HEX[g]))
+        figi.update_layout(
+            barmode="stack", height=320, margin=dict(t=30, b=10, l=10, r=10),
+            title="오딧 인치별 월 판매량 (누적)", plot_bgcolor="white",
+            yaxis=dict(gridcolor="#EEF1F5", title="판매수량"),
+            legend=dict(orientation="h", y=1.12))
+        st.plotly_chart(figi, use_container_width=True, config={"displayModeBar": False})
+        st.divider()
 
     # ----- 디자인 스타일 (화이트 카드 + 블루 포인트) -----
     st.markdown("""<style>
