@@ -348,6 +348,21 @@ def build_inventory(client):
     }
 
 
+def build_current_month(client):
+    """이번 달 월별 파일(data/monthly/YYYY-MM.json)을 다시 받아 덮어쓴다."""
+    import os
+    from datetime import date
+    # backfill_monthly의 집계·저장 로직 재사용
+    from backfill_monthly import backfill_one
+    today = date.today()
+    ym = f"{today.year:04d}-{today.month:02d}"
+    print(f"이번 달 월별 데이터 갱신 중... ({ym})")
+    try:
+        backfill_one(client, ym)
+    except Exception as e:
+        print(f"  이번 달 월별 갱신 실패(무시하고 계속): {e}")
+
+
 def main():
     client = Cafe24Client()
     print("매출 데이터 생성 중...")
@@ -356,6 +371,8 @@ def main():
     write_json("product.json", build_product(client))
     print("재고 데이터 생성 중...")
     write_json("inventory.json", build_inventory(client))
+    # 이번 달 월별 누적 파일도 최신화 (상품/매출 대시보드가 data/monthly 를 읽음)
+    build_current_month(client)
     print("완료.")
 
 
