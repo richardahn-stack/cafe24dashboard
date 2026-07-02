@@ -749,7 +749,22 @@ def render_product(orders):
     # ============================================================
     st.divider()
     st.header("3. 번들링 구매 분석")
-    st.caption("한 주문에 서로 다른 상품을 2개 이상 담은 '함께구매' 분석 (위 기간 필터 적용)")
+    st.caption("한 주문에 서로 다른 상품을 2개 이상 담은 '함께구매' 분석 (아래 자체 기간 필터 사용)")
+
+    # 번들 전용 기간 필터 (1·2번과 독립)
+    bf1, bf2 = st.columns([2, 1])
+    with bf1:
+        brng = st.date_input("번들 분석 기간", (max(dmin, dmax - timedelta(days=29)), dmax),
+                             min_value=dmin, max_value=dmax, key="bundle_range")
+    if isinstance(brng, tuple) and len(brng) == 2:
+        b_from, b_to = brng
+    else:
+        b_from = b_to = brng if not isinstance(brng, tuple) else dmin
+    b_span = (b_to - b_from).days + 1
+    bp_to = b_from - timedelta(days=1)
+    bp_from = bp_to - timedelta(days=b_span - 1)
+    with bf2:
+        st.caption(f"현재: {b_from} ~ {b_to}\n\n비교: {bp_from} ~ {bp_to}")
 
     # 월별 파일에서 기간 내 bundle_daily 를 합산
     def agg_bundle(d_from, d_to):
@@ -775,8 +790,8 @@ def render_product(orders):
     if not has_bundle:
         st.info("번들 일자별 데이터가 아직 없어요. build_data/backfill 갱신 후 데이터를 다시 생성하세요.")
     else:
-        cstat, cpairs, ccw = agg_bundle(cur_from, cur_to)
-        pstat, ppairs, pcw = agg_bundle(prev_from, prev_to)
+        cstat, cpairs, ccw = agg_bundle(b_from, b_to)
+        pstat, ppairs, pcw = agg_bundle(bp_from, bp_to)
 
         # --- 3-0) 요약 지표 ---
         tot = cstat["total"]; bo = cstat["bundle"]

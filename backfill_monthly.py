@@ -93,11 +93,15 @@ def aggregate_month(orders):
                 if net0 <= 0:
                     continue
                 pn = it.get("product_name", "(이름없음)")
-                if pn not in prod_names:
-                    prod_names.append(pn)
+                opt0 = option_label(it)
+                # 오딧 캐리어면 옵션(인치·색상)으로 세분, 나머지는 상품명 그대로
+                ok0 = _odit_key(pn, opt0)
+                disp = f"오딧 {ok0.replace('·', ' ')}" if ok0 else pn
+                if disp not in prod_names:
+                    prod_names.append(disp)
                 order_amt += (to_amount(it.get("product_price"))
                               + to_amount(it.get("option_price"))) * net0
-                if classify(pn, option_label(it))[0] == "캐리어":
+                if classify(pn, opt0)[0] == "캐리어":
                     has_carrier = True
             if prod_names:
                 bd = bundle_daily.setdefault(d, {
@@ -114,11 +118,11 @@ def aggregate_month(orders):
                         cell["c"] += 1
                         cell["a"] += order_amt
                     if has_carrier:
-                        for pn in prod_names:
-                            if classify(pn, "")[0] != "캐리어":
-                                cw = bd["carrier_with"].setdefault(pn, {"c": 0, "a": 0.0})
-                                cw["c"] += 1
-                                cw["a"] += order_amt
+                        # 캐리어 주문에 함께 담긴 모든 품목(다른 캐리어 옵션·악세사리 모두 포함)
+                        for disp in prod_names:
+                            cw = bd["carrier_with"].setdefault(disp, {"c": 0, "a": 0.0})
+                            cw["c"] += 1
+                            cw["a"] += order_amt
                 else:
                     bd["single_amount"] += order_amt
 
