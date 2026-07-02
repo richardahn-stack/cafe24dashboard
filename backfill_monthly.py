@@ -35,14 +35,30 @@ def _odit_key(pname, opt):
     text = (pname or "") + " " + (opt or "")
     if "오딧" not in text or any(x in text for x in _EXCLUDE):
         return None
-    m = re.search(r"(\d+)\s*인치", opt or "")
-    if not m:
-        return None
-    flap = "플랩" in (opt or "")
-    # 플랩은 20인치만 존재 → 옵션에 적힌 숫자와 무관하게 항상 "20인치 플랩"으로 통일
-    group = "20인치 플랩" if flap else f"{m.group(1)}인치"
-    norm = re.sub(r"\(.*?\)", "", opt or "").replace("아이시 핑크", "아이시핑크")
-    color = next((c for c in _ODIT_COLORS if c in norm), None)
+    # 대괄호(배송/날짜 예: [3/20 예약배송])·소괄호(예: (5COLOR)) 먼저 제거 → 날짜 숫자 오염 방지
+    o = re.sub(r"\[.*?\]", "", opt or "")
+    o = re.sub(r"\(.*?\)", "", o)
+    o = o.replace("아이시 핑크", "아이시핑크")
+    p = pname or ""
+    opt_inch = re.search(r"(\d+)\s*인치", o)
+    # 플랩 판별:
+    #  - 옵션에 '플랩' 있으면 플랩 (예: "플랩/솔티블루")
+    #  - 상품명에 '플랩'이고 옵션에 인치·'오딧'이 없으면 단독 플랩 상품(옵션=색상만)
+    if "플랩" in o:
+        flap = True
+    elif "플랩" in p and not opt_inch and "오딧" not in o:
+        flap = True
+    else:
+        flap = False
+    if flap:
+        group = "20인치 플랩"
+    else:
+        m = opt_inch or re.search(r"(\d+)\s*인치", p)
+        if not m:
+            return None
+        group = f"{m.group(1)}인치"
+    # 색상: '/' 또는 공백 구분 모두 대응 (o 전체에서 색상 문자열 탐색)
+    color = next((c for c in _ODIT_COLORS if c in o), None)
     return f"{group}·{color}" if color else None
 
 

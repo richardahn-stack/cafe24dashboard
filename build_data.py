@@ -189,13 +189,25 @@ def build_product(client):
         text = (pname or "") + " " + (opt or "")
         if "오딧" not in text or any(x in text for x in _EXCLUDE):
             return None
-        m = _re.search(r"(\d+)\s*인치", opt or "")
-        if not m:
-            return None
-        flap = "플랩" in (opt or "")
-        group = "20인치 플랩" if flap else f"{m.group(1)}인치"
-        norm = _re.sub(r"\(.*?\)", "", opt or "").replace("아이시 핑크", "아이시핑크")
-        color = next((c for c in _ODIT_COLORS if c in norm), None)
+        o = _re.sub(r"\[.*?\]", "", opt or "")
+        o = _re.sub(r"\(.*?\)", "", o)
+        o = o.replace("아이시 핑크", "아이시핑크")
+        p = pname or ""
+        opt_inch = _re.search(r"(\d+)\s*인치", o)
+        if "플랩" in o:
+            flap = True
+        elif "플랩" in p and not opt_inch and "오딧" not in o:
+            flap = True
+        else:
+            flap = False
+        if flap:
+            group = "20인치 플랩"
+        else:
+            m = opt_inch or _re.search(r"(\d+)\s*인치", p)
+            if not m:
+                return None
+            group = f"{m.group(1)}인치"
+        color = next((c for c in _ODIT_COLORS if c in o), None)
         return f"{group}·{color}" if color else None
 
     for o in orders:
