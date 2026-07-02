@@ -210,10 +210,50 @@ def build_product(client):
         color = next((c for c in _ODIT_COLORS if c in o), None)
         return f"{group}·{color}" if color else None
 
+    from itertools import combinations
+    bundle = {
+        "total_orders": 0, "bundle_orders": 0,
+        "single_amount": 0.0, "single_cnt": 0,
+        "bundle_amount": 0.0, "bundle_cnt": 0,
+    }
+    pair_counter = Counter()       # (상품A, 상품B) -> 함께 담긴 주문 수
+    carrier_with = Counter()       # 캐리어와 함께 담긴 비-캐리어 상품 -> 주문 수
+
     for o in orders:
         if o.get("canceled") == "T":
             continue
         d = order_day(o)
+        # --- 주문 단위 번들 분석 ---
+        prod_names = []            # 이 주문에 담긴 서로 다른 상품명
+        order_amt = 0.0
+        has_carrier = False
+        for it in (o.get("items") or []):
+            net0 = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
+            if net0 <= 0:
+                continue
+            pn = it.get("product_name", "(이름없음)")
+            if pn not in prod_names:
+                prod_names.append(pn)
+            order_amt += (to_amount(it.get("product_price"))
+                          + to_amount(it.get("option_price"))) * net0
+            if classify(pn, option_label(it))[0] == "캐리어":
+                has_carrier = True
+        if prod_names:
+            bundle["total_orders"] += 1
+            if len(prod_names) >= 2:
+                bundle["bundle_orders"] += 1
+                bundle["bundle_amount"] += order_amt
+                bundle["bundle_cnt"] += 1
+                for a, b in combinations(sorted(prod_names), 2):
+                    pair_counter[(a, b)] += 1
+                if has_carrier:
+                    for pn in prod_names:
+                        if classify(pn, "")[0] != "캐리어":
+                            carrier_with[pn] += 1
+            else:
+                bundle["single_amount"] += order_amt
+                bundle["single_cnt"] += 1
+
         for it in (o.get("items") or []):
             net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
             if net <= 0:
@@ -260,6 +300,18 @@ def build_product(client):
                       for d, cats in sorted(cat_daily.items())},
         "odit_daily": {k: {d: {"q": e["q"], "a": round(e["a"])} for d, e in m.items()}
                        for k, m in odit_daily.items()},
+        "bundle": {
+            "total_orders": bundle["total_orders"],
+            "bundle_orders": bundle["bundle_orders"],
+            "single_aov": round(bundle["single_amount"] / bundle["single_cnt"])
+                          if bundle["single_cnt"] else 0,
+            "bundle_aov": round(bundle["bundle_amount"] / bundle["bundle_cnt"])
+                          if bundle["bundle_cnt"] else 0,
+            "top_pairs": [{"a": a, "b": b, "count": c}
+                          for (a, b), c in pair_counter.most_common(20)],
+            "carrier_with": [{"name": n, "count": c}
+                             for n, c in carrier_with.most_common(15)],
+        },
     }
 
 

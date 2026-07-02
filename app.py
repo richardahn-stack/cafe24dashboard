@@ -744,6 +744,51 @@ def render_product(orders):
         st.markdown("컬러별")
         st.dataframe(style_cmp(color_df2), hide_index=True, use_container_width=True)
 
+    # ============================================================
+    # 3. 번들링(함께구매) 분석
+    # ============================================================
+    st.divider()
+    st.header("3. 번들링 구매 분석")
+    st.caption("한 주문에 서로 다른 상품을 2개 이상 담은 '함께구매' 주문 분석 "
+               "(최근 90일 · product.json 기준)")
+    try:
+        pj = load_data_json("product.json")
+        bd = pj.get("bundle")
+    except Exception:
+        bd = None
+    if not bd:
+        st.info("번들 데이터가 아직 없어요. (build_data.py 갱신 후 데이터 재생성 필요)")
+    else:
+        tot = bd.get("total_orders", 0)
+        bo = bd.get("bundle_orders", 0)
+        ratio = (bo / tot * 100) if tot else 0
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("전체 주문", f"{tot:,}건")
+        b2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
+        b3.metric("단품 객단가", won_short(bd.get("single_aov", 0)))
+        b4.metric("번들 객단가", won_short(bd.get("bundle_aov", 0)),
+                  f"+{won_short(bd.get('bundle_aov',0) - bd.get('single_aov',0))}")
+
+        pairs = bd.get("top_pairs", [])
+        if pairs:
+            st.markdown("**자주 함께 구매되는 조합 TOP**")
+            pdf = pd.DataFrame([{"상품 A": x["a"], "상품 B": x["b"], "함께 주문": x["count"]}
+                               for x in pairs])
+            st.dataframe(pdf.style.format({"함께 주문": "{:,}"}),
+                         hide_index=True, use_container_width=True)
+
+        cw = bd.get("carrier_with", [])
+        if cw:
+            st.markdown("**캐리어와 함께 담은 상품 (캐리어 주문 기준)**")
+            cwdf = pd.DataFrame([{"함께 담은 상품": x["name"], "주문 수": x["count"]}
+                                for x in cw])
+            fig = px.bar(cwdf.head(10), x="주문 수", y="함께 담은 상품",
+                         orientation="h", color_discrete_sequence=["#378ADD"])
+            fig.update_layout(height=340, margin=dict(t=10, b=10, l=10, r=10),
+                              yaxis=dict(autorange="reversed"), plot_bgcolor="white",
+                              xaxis=dict(gridcolor="#EEF1F5"))
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
 
 # ======================================================================
 # 재고 대시보드
