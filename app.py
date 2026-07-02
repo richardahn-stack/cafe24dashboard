@@ -637,15 +637,25 @@ def render_product(orders):
         else:
             st.caption("이 기간 판매 없음")
 
-    def build_compare(dim):
+    def build_compare(dim, inch_filter=None, color_filter=None):
         cur_d, prev_d = {}, {}
         for (grp, color), a in cur.items():
+            if inch_filter and grp not in inch_filter:
+                continue
+            if color_filter and color not in color_filter:
+                continue
             key = grp if dim == "inch" else color
             t = cur_d.setdefault(key, {"q": 0, "a": 0}); t["q"] += a["q"]; t["a"] += a["a"]
         for (grp, color), a in prev.items():
+            if inch_filter and grp not in inch_filter:
+                continue
+            if color_filter and color not in color_filter:
+                continue
             key = grp if dim == "inch" else color
             t = prev_d.setdefault(key, {"q": 0, "a": 0}); t["q"] += a["q"]; t["a"] += a["a"]
         order = ODIT_GROUPS if dim == "inch" else ODIT_COLORS
+        tot_q = sum(v["q"] for v in cur_d.values()) or 1
+        tot_a = sum(v["a"] for v in cur_d.values()) or 1
         rows = []
         for key in order:
             cq = cur_d.get(key, {}).get("q", 0); ca = cur_d.get(key, {}).get("a", 0)
@@ -656,7 +666,9 @@ def render_product(orders):
             dq = cq - pq
             arrow = "▲" if dq > 0 else ("▼" if dq < 0 else "─")
             rows.append({("인치" if dim == "inch" else "컬러"): key,
-                         "판매수량": cq, "판매액": ca, "객단가": round(aov),
+                         "판매수량": cq, "수량비중": cq / tot_q * 100,
+                         "판매액": ca, "매출비중": ca / tot_a * 100,
+                         "객단가": round(aov),
                          "전기간": pq, "증감": f"{arrow} {dq:+d}"})
         return pd.DataFrame(rows)
 
@@ -668,7 +680,8 @@ def render_product(orders):
                 return "color:#E5484D;font-weight:600;"
             return ""
         return (df.style.map(updown, subset=["증감"])
-                .format({"판매수량": "{:,}", "판매액": "₩{:,.0f}",
+                .format({"판매수량": "{:,}", "수량비중": "{:.1f}%",
+                         "판매액": "₩{:,.0f}", "매출비중": "{:.1f}%",
                          "객단가": "₩{:,.0f}", "전기간": "{:,}"}))
 
     st.markdown("**인치별 요약**")
@@ -719,6 +732,17 @@ def render_product(orders):
         st.line_chart(tdf)
     else:
         st.caption("선택한 기간·옵션에 데이터가 없어요.")
+
+    # 그래프 아래 표: 선택한 인치·컬러 기준 요약 (1번과 동일 구성)
+    st.markdown("**선택 옵션 요약** (선택한 인치·컬러 기준)")
+    inch_df2 = build_compare("inch", inch_filter=inch_set, color_filter=color_set)
+    if not inch_df2.empty:
+        st.markdown("인치별")
+        st.dataframe(style_cmp(inch_df2), hide_index=True, use_container_width=True)
+    color_df2 = build_compare("color", inch_filter=inch_set, color_filter=color_set)
+    if not color_df2.empty:
+        st.markdown("컬러별")
+        st.dataframe(style_cmp(color_df2), hide_index=True, use_container_width=True)
 
 
 # ======================================================================
