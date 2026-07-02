@@ -745,49 +745,141 @@ def render_product(orders):
         st.dataframe(style_cmp(color_df2), hide_index=True, use_container_width=True)
 
     # ============================================================
-    # 3. 번들링(함께구매) 분석
+    # 3. 번들링(함께구매) 분석 — 월별 bundle_daily 를 기간 필터로 집계
     # ============================================================
     st.divider()
     st.header("3. 번들링 구매 분석")
-    st.caption("한 주문에 서로 다른 상품을 2개 이상 담은 '함께구매' 주문 분석 "
-               "(최근 90일 · product.json 기준)")
-    try:
-        pj = load_data_json("product.json")
-        bd = pj.get("bundle")
-    except Exception:
-        bd = None
-    if not bd:
-        st.info("번들 데이터가 아직 없어요. (build_data.py 갱신 후 데이터 재생성 필요)")
+    st.caption("한 주문에 서로 다른 상품을 2개 이상 담은 '함께구매' 분석 (위 기간 필터 적용)")
+
+    # 월별 파일에서 기간 내 bundle_daily 를 합산
+    def agg_bundle(d_from, d_to):
+        stat = {"total": 0, "bundle": 0, "single_amt": 0, "bundle_amt": 0}
+        pairs = {}            # "A\tB" -> {c, a}
+        cwith = {}            # 상품 -> {c, a}
+        for mkey, md in monthly.items():
+            for dt, v in md.get("bundle_daily", {}).items():
+                dd = date.fromisoformat(dt)
+                if not (d_from <= dd <= d_to):
+                    continue
+                stat["total"] += v.get("total_orders", 0)
+                stat["bundle"] += v.get("bundle_orders", 0)
+                stat["single_amt"] += v.get("single_amount", 0)
+                stat["bundle_amt"] += v.get("bundle_amount", 0)
+                for pk, cell in v.get("pairs", {}).items():
+                    t = pairs.setdefault(pk, {"c": 0, "a": 0}); t["c"] += cell["c"]; t["a"] += cell["a"]
+                for n, cell in v.get("carrier_with", {}).items():
+                    t = cwith.setdefault(n, {"c": 0, "a": 0}); t["c"] += cell["c"]; t["a"] += cell["a"]
+        return stat, pairs, cwith
+
+    has_bundle = any("bundle_daily" in md for md in monthly.values())
+    if not has_bundle:
+        st.info("번들 일자별 데이터가 아직 없어요. build_data/backfill 갱신 후 데이터를 다시 생성하세요.")
     else:
-        tot = bd.get("total_orders", 0)
-        bo = bd.get("bundle_orders", 0)
-        ratio = (bo / tot * 100) if tot else 0
-        b1, b2, b3, b4 = st.columns(4)
-        b1.metric("전체 주문", f"{tot:,}건")
-        b2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
-        b3.metric("단품 객단가", won_short(bd.get("single_aov", 0)))
-        b4.metric("번들 객단가", won_short(bd.get("bundle_aov", 0)),
-                  f"+{won_short(bd.get('bundle_aov',0) - bd.get('single_aov',0))}")
+        cstat, cpairs, ccw = agg_bundle(cur_from, cur_to)
+        pstat, ppairs, pcw = agg_bundle(prev_from, prev_to)
 
-        pairs = bd.get("top_pairs", [])
-        if pairs:
-            st.markdown("**자주 함께 구매되는 조합 TOP**")
-            pdf = pd.DataFrame([{"상품 A": x["a"], "상품 B": x["b"], "함께 주문": x["count"]}
-                               for x in pairs])
-            st.dataframe(pdf.style.format({"함께 주문": "{:,}"}),
-                         hide_index=True, use_container_width=True)
+        # --- 3-0) 요약 지표 ---
+        tot = cstat["total"]; bo = cstat["bundle"]
+        ratio = bo / tot * 100 if tot else 0
+        single_cnt = tot - bo
+        s_aov = round(cstat["single_amt"] / single_cnt) if single_cnt else 0
+        b_aov = round(cstat["bundle_amt"] / bo) if bo else 0
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("전체 주문", f"{tot:,}건")
+        m2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
+        m3.metric("단품 객단가", won_short(s_aov))
+        m4.metric("번들 객단가", won_short(b_aov), f"+{won_short(b_aov - s_aov)}")
 
-        cw = bd.get("carrier_with", [])
-        if cw:
-            st.markdown("**캐리어와 함께 담은 상품 (캐리어 주문 기준)**")
-            cwdf = pd.DataFrame([{"함께 담은 상품": x["name"], "주문 수": x["count"]}
-                                for x in cw])
-            fig = px.bar(cwdf.head(10), x="주문 수", y="함께 담은 상품",
-                         orientation="h", color_discrete_sequence=["#378ADD"])
-            fig.update_layout(height=340, margin=dict(t=10, b=10, l=10, r=10),
+        # --- 3-1) 합구매 조합: 파이 + 표 (건수/매출 비중, 전기간 비교) ---
+        st.markdown("#### 합구매 조합")
+        metric = st.radio("기준", ["구매 건수", "매출"], horizontal=True, key="bundle_metric")
+        use_amt = (metric == "매출")
+
+        def pick(cell):
+            return cell["a"] if use_amt else cell["c"]
+
+        cur_sorted = sorted(cpairs.items(), key=lambda x: -pick(x[1]))
+        top = cur_sorted[:12]
+        if top:
+            labels = [pk.replace("\t", " + ") for pk, _ in top]
+            values = [pick(c) for _, c in top]
+            pcol1, pcol2 = st.columns([1, 1.3])
+            with pcol1:
+                fig = px.pie(values=values, names=labels, hole=0.5)
+                fig.update_traces(textinfo="percent")
+                fig.update_layout(height=320, margin=dict(t=10, b=10, l=10, r=10),
+                                  showlegend=False)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            with pcol2:
+                tot_c = sum(c["c"] for _, c in cpairs.items()) or 1
+                tot_a = sum(c["a"] for _, c in cpairs.items()) or 1
+                rows = []
+                for pk, c in cur_sorted[:20]:
+                    pc = ppairs.get(pk, {"c": 0, "a": 0})
+                    dc = c["c"] - pc["c"]
+                    arrow = "▲" if dc > 0 else ("▼" if dc < 0 else "─")
+                    aov = round(c["a"] / c["c"]) if c["c"] else 0
+                    rows.append({"조합": pk.replace("\t", " + "),
+                                 "건수": c["c"], "건수비중": c["c"] / tot_c * 100,
+                                 "매출": c["a"], "매출비중": c["a"] / tot_a * 100,
+                                 "객단가": aov, "증감(건)": f"{arrow} {dc:+d}"})
+                bdf = pd.DataFrame(rows)
+
+                def ud(v):
+                    if isinstance(v, str) and v.startswith("▲"): return "color:#1D9E75;font-weight:600;"
+                    if isinstance(v, str) and v.startswith("▼"): return "color:#E5484D;font-weight:600;"
+                    return ""
+                st.dataframe(
+                    bdf.style.map(ud, subset=["증감(건)"]).format(
+                        {"건수": "{:,}", "건수비중": "{:.1f}%", "매출": "₩{:,.0f}",
+                         "매출비중": "{:.1f}%", "객단가": "₩{:,.0f}"}),
+                    hide_index=True, use_container_width=True)
+        else:
+            st.caption("이 기간 합구매 조합이 없어요.")
+
+        # --- 3-2) 오딧 캐리어 합구매 추이 (캐리어와 함께 산 상품) ---
+        st.markdown("#### 오딧 캐리어 합구매 추이")
+        st.caption("오딧 캐리어를 산 주문에 함께 담긴 상품 (캐리어+캐리어, 캐리어+악세사리 포함)")
+        if ccw:
+            cw_sorted = sorted(ccw.items(), key=lambda x: -(x[1]["a"] if use_amt else x[1]["c"]))
+            cwdf = pd.DataFrame([{"함께 담은 상품": n, "구매수": c["c"], "매출": c["a"]}
+                                for n, c in cw_sorted[:15]])
+            fig = px.bar(cwdf.head(10), x=("매출" if use_amt else "구매수"),
+                         y="함께 담은 상품", orientation="h",
+                         color_discrete_sequence=["#378ADD"])
+            fig.update_layout(height=360, margin=dict(t=10, b=10, l=10, r=10),
                               yaxis=dict(autorange="reversed"), plot_bgcolor="white",
                               xaxis=dict(gridcolor="#EEF1F5"))
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.dataframe(cwdf.style.format({"구매수": "{:,}", "매출": "₩{:,.0f}"}),
+                         hide_index=True, use_container_width=True)
+        else:
+            st.caption("이 기간 캐리어 합구매 데이터가 없어요.")
+
+        # --- 3-3) 특정 상품 선택 → 함께 산 조합 (수량 많은 순) ---
+        st.markdown("#### 상품 선택 → 함께 구매한 조합")
+        all_products = set()
+        for pk in cpairs:
+            a, b = pk.split("\t")
+            all_products.add(a); all_products.add(b)
+        if all_products:
+            sel = st.selectbox("상품 선택", sorted(all_products), key="bundle_sel")
+            partners = []
+            for pk, c in cpairs.items():
+                a, b = pk.split("\t")
+                if sel == a:
+                    partners.append((b, c))
+                elif sel == b:
+                    partners.append((a, c))
+            partners.sort(key=lambda x: -x[1]["c"])
+            if partners:
+                pdf = pd.DataFrame([{"함께 산 상품": n, "함께 주문 건수": c["c"], "매출": c["a"]}
+                                   for n, c in partners])
+                st.dataframe(pdf.style.format({"함께 주문 건수": "{:,}", "매출": "₩{:,.0f}"}),
+                             hide_index=True, use_container_width=True)
+            else:
+                st.caption(f"'{sel}'와 함께 구매된 조합이 이 기간엔 없어요.")
+
 
 
 # ======================================================================

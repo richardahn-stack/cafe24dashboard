@@ -75,11 +75,53 @@ def aggregate_month(orders):
     total_qty = 0
     order_ids = set()
 
+    # 번들(함께구매) 일자별 집계
+    from itertools import combinations
+    bundle_daily = {}          # date -> {stat, pairs, carrier_with}
+
     for o in orders:
         if o.get("canceled") == "T":
             continue
         d = order_day(o)
         order_ids.add(o.get("order_id"))
+
+        # --- 주문 단위 번들 집계 ---
+        if d:
+            prod_names, order_amt, has_carrier = [], 0.0, False
+            for it in (o.get("items") or []):
+                net0 = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
+                if net0 <= 0:
+                    continue
+                pn = it.get("product_name", "(이름없음)")
+                if pn not in prod_names:
+                    prod_names.append(pn)
+                order_amt += (to_amount(it.get("product_price"))
+                              + to_amount(it.get("option_price"))) * net0
+                if classify(pn, option_label(it))[0] == "캐리어":
+                    has_carrier = True
+            if prod_names:
+                bd = bundle_daily.setdefault(d, {
+                    "total_orders": 0, "bundle_orders": 0,
+                    "single_amount": 0.0, "bundle_amount": 0.0,
+                    "pairs": {}, "carrier_with": {}})
+                bd["total_orders"] += 1
+                if len(prod_names) >= 2:
+                    bd["bundle_orders"] += 1
+                    bd["bundle_amount"] += order_amt
+                    for a, b in combinations(sorted(prod_names), 2):
+                        pk = f"{a}\t{b}"
+                        cell = bd["pairs"].setdefault(pk, {"c": 0, "a": 0.0})
+                        cell["c"] += 1
+                        cell["a"] += order_amt
+                    if has_carrier:
+                        for pn in prod_names:
+                            if classify(pn, "")[0] != "캐리어":
+                                cw = bd["carrier_with"].setdefault(pn, {"c": 0, "a": 0.0})
+                                cw["c"] += 1
+                                cw["a"] += order_amt
+                else:
+                    bd["single_amount"] += order_amt
+
         for it in (o.get("items") or []):
             net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
             if net <= 0:
@@ -131,6 +173,17 @@ def aggregate_month(orders):
                       for d, cats in sorted(cat_daily.items())},
         "odit_daily": {k: {d: {"q": e["q"], "a": round(e["a"])} for d, e in m.items()}
                        for k, m in odit_daily.items()},
+        "bundle_daily": {
+            d: {
+                "total_orders": v["total_orders"],
+                "bundle_orders": v["bundle_orders"],
+                "single_amount": round(v["single_amount"]),
+                "bundle_amount": round(v["bundle_amount"]),
+                "pairs": {pk: {"c": c["c"], "a": round(c["a"])} for pk, c in v["pairs"].items()},
+                "carrier_with": {n: {"c": c["c"], "a": round(c["a"])}
+                                 for n, c in v["carrier_with"].items()},
+            } for d, v in sorted(bundle_daily.items())
+        },
     }
 
 
