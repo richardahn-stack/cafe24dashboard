@@ -871,29 +871,38 @@ def render_product(orders):
         else:
             st.caption("이 기간 캐리어 합구매 데이터가 없어요.")
 
-        # --- 3-3) 특정 상품 선택 → 함께 산 조합 (수량 많은 순) ---
-        st.markdown("#### 상품 선택 → 함께 구매한 조합")
-        all_products = set()
-        for pk in cpairs:
-            a, b = pk.split("\t")
-            all_products.add(a); all_products.add(b)
-        if all_products:
-            sel = st.selectbox("상품 선택", sorted(all_products), key="bundle_sel")
-            partners = []
-            for pk, c in cpairs.items():
-                a, b = pk.split("\t")
-                if sel == a:
-                    partners.append((b, c))
-                elif sel == b:
-                    partners.append((a, c))
-            partners.sort(key=lambda x: -x[1]["c"])
-            if partners:
-                pdf = pd.DataFrame([{"함께 산 상품": n, "함께 주문 건수": c["c"], "매출": c["a"]}
-                                   for n, c in partners])
-                st.dataframe(pdf.style.format({"함께 주문 건수": "{:,}", "매출": "₩{:,.0f}"}),
-                             hide_index=True, use_container_width=True)
-            else:
-                st.caption(f"'{sel}'와 함께 구매된 조합이 이 기간엔 없어요.")
+        # --- 3-3) 캐리어 세트 조합 (캐리어 2개 이상 주문의 인치·컬러 조합) ---
+        st.markdown("#### 캐리어 세트 구매 조합")
+        st.caption("캐리어를 2개 이상 함께 산 주문의 인치 조합 · 컬러 조합 (순수 캐리어 세트)")
+        set_inch, set_color = {}, {}
+        for mkey, md in monthly.items():
+            for dt, v in md.get("bundle_daily", {}).items():
+                dd = date.fromisoformat(dt)
+                if not (b_from <= dd <= b_to):
+                    continue
+                for k, c in v.get("set_inch", {}).items():
+                    t = set_inch.setdefault(k, {"c": 0, "a": 0}); t["c"] += c["c"]; t["a"] += c["a"]
+                for k, c in v.get("set_color", {}).items():
+                    t = set_color.setdefault(k, {"c": 0, "a": 0}); t["c"] += c["c"]; t["a"] += c["a"]
+
+        if not set_inch and not set_color:
+            st.info("이 기간에 캐리어 2개 이상 세트 주문이 없어요. (데이터 재생성 필요할 수 있음)")
+        else:
+            sc1, sc2 = st.columns(2)
+            with sc1:
+                st.markdown("**인치 조합 TOP**")
+                rows = [{"인치 조합": k, "건수": c["c"], "매출": c["a"]}
+                        for k, c in sorted(set_inch.items(), key=lambda x: -x[1]["c"])[:15]]
+                if rows:
+                    st.dataframe(pd.DataFrame(rows).style.format({"건수": "{:,}", "매출": "₩{:,.0f}"}),
+                                 hide_index=True, use_container_width=True)
+            with sc2:
+                st.markdown("**컬러 조합 TOP**")
+                rows = [{"컬러 조합": k, "건수": c["c"], "매출": c["a"]}
+                        for k, c in sorted(set_color.items(), key=lambda x: -x[1]["c"])[:15]]
+                if rows:
+                    st.dataframe(pd.DataFrame(rows).style.format({"건수": "{:,}", "매출": "₩{:,.0f}"}),
+                                 hide_index=True, use_container_width=True)
 
 
 

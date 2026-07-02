@@ -107,7 +107,8 @@ def aggregate_month(orders):
                 bd = bundle_daily.setdefault(d, {
                     "total_orders": 0, "bundle_orders": 0,
                     "single_amount": 0.0, "bundle_amount": 0.0,
-                    "pairs": {}, "carrier_with": {}})
+                    "pairs": {}, "carrier_with": {},
+                    "set_inch": {}, "set_color": {}})
                 bd["total_orders"] += 1
                 if len(prod_names) >= 2:
                     bd["bundle_orders"] += 1
@@ -118,11 +119,27 @@ def aggregate_month(orders):
                         cell["c"] += 1
                         cell["a"] += order_amt
                     if has_carrier:
-                        # 캐리어 주문에 함께 담긴 모든 품목(다른 캐리어 옵션·악세사리 모두 포함)
                         for disp in prod_names:
                             cw = bd["carrier_with"].setdefault(disp, {"c": 0, "a": 0.0})
                             cw["c"] += 1
                             cw["a"] += order_amt
+                    # 캐리어 옵션이 2개 이상이면 인치/컬러 조합 집계 (순수 캐리어 세트)
+                    carrier_opts = [n for n in prod_names if n.startswith("오딧 ")
+                                    and any(g in n for g in ["20인치", "24인치", "26인치", "29인치"])]
+                    if len(carrier_opts) >= 2:
+                        inches, colors = [], []
+                        for n in carrier_opts:
+                            body = n[len("오딧 "):]  # "20인치 플랩 실버" or "24인치 블랙"
+                            parts = body.rsplit(" ", 1)
+                            if len(parts) == 2:
+                                inches.append(parts[0]); colors.append(parts[1])
+                        if len(inches) >= 2:
+                            ik = " + ".join(sorted(inches))
+                            ck = " + ".join(sorted(colors))
+                            si = bd["set_inch"].setdefault(ik, {"c": 0, "a": 0.0})
+                            si["c"] += 1; si["a"] += order_amt
+                            sc = bd["set_color"].setdefault(ck, {"c": 0, "a": 0.0})
+                            sc["c"] += 1; sc["a"] += order_amt
                 else:
                     bd["single_amount"] += order_amt
 
@@ -186,6 +203,10 @@ def aggregate_month(orders):
                 "pairs": {pk: {"c": c["c"], "a": round(c["a"])} for pk, c in v["pairs"].items()},
                 "carrier_with": {n: {"c": c["c"], "a": round(c["a"])}
                                  for n, c in v["carrier_with"].items()},
+                "set_inch": {k: {"c": c["c"], "a": round(c["a"])}
+                             for k, c in v.get("set_inch", {}).items()},
+                "set_color": {k: {"c": c["c"], "a": round(c["a"])}
+                              for k, c in v.get("set_color", {}).items()},
             } for d, v in sorted(bundle_daily.items())
         },
     }
