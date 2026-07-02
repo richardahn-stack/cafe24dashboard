@@ -904,6 +904,49 @@ def render_product(orders):
                     st.dataframe(pd.DataFrame(rows).style.format({"건수": "{:,}", "매출": "₩{:,.0f}"}),
                                  hide_index=True, use_container_width=True)
 
+            # --- 특정 캐리어 옵션을 골라 그와 함께 산 캐리어 보기 (pairs 활용) ---
+            st.markdown("**캐리어 옵션 선택 → 함께 산 캐리어 조합**")
+            st.caption("인치·컬러를 골라 그 캐리어와 함께 구매된 다른 캐리어를 봅니다('전체' 가능).")
+            fsel1, fsel2 = st.columns(2)
+            pick_inch = fsel1.selectbox("인치", ["전체"] + ODIT_GROUPS, key="setpick_inch")
+            pick_color = fsel2.selectbox("컬러", ["전체"] + ODIT_COLORS, key="setpick_color")
+
+            def is_carrier_opt(name):
+                return name.startswith("오딧 ") and any(g in name for g in
+                    ["20인치", "24인치", "26인치", "29인치"])
+
+            def opt_match(name):
+                # name 예: "오딧 29인치 솔티블루" / "오딧 20인치 플랩 실버"
+                body = name[len("오딧 "):]
+                parts = body.rsplit(" ", 1)
+                if len(parts) != 2:
+                    return False
+                inch, color = parts
+                if pick_inch != "전체" and inch != pick_inch:
+                    return False
+                if pick_color != "전체" and color != pick_color:
+                    return False
+                return True
+
+            # 번들 기간 내 pairs 중 '양쪽 다 캐리어 옵션'이고 한쪽이 선택 조건에 맞는 것
+            partners = {}
+            for pk, c in cpairs.items():
+                a, b = pk.split("\t")
+                if not (is_carrier_opt(a) and is_carrier_opt(b)):
+                    continue
+                if opt_match(a):
+                    t = partners.setdefault(b, {"c": 0, "a": 0}); t["c"] += c["c"]; t["a"] += c["a"]
+                if opt_match(b):
+                    t = partners.setdefault(a, {"c": 0, "a": 0}); t["c"] += c["c"]; t["a"] += c["a"]
+            if partners:
+                rows = [{"함께 산 캐리어": n, "건수": v["c"], "매출": v["a"]}
+                        for n, v in sorted(partners.items(), key=lambda x: -x[1]["c"])]
+                st.dataframe(pd.DataFrame(rows).style.format({"건수": "{:,}", "매출": "₩{:,.0f}"}),
+                             hide_index=True, use_container_width=True)
+            else:
+                sel_label = f"{pick_inch if pick_inch!='전체' else ''} {pick_color if pick_color!='전체' else ''}".strip() or "선택 조건"
+                st.caption(f"'{sel_label}' 캐리어와 함께 산 다른 캐리어가 이 기간엔 없어요.")
+
 
 
 # ======================================================================
