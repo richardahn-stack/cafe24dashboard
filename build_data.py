@@ -193,7 +193,7 @@ def build_product(client):
         if not m:
             return None
         flap = "플랩" in (opt or "")
-        group = f"{m.group(1)}인치 플랩" if flap else f"{m.group(1)}인치"
+        group = "20인치 플랩" if flap else f"{m.group(1)}인치"
         norm = _re.sub(r"\(.*?\)", "", opt or "").replace("아이시 핑크", "아이시핑크")
         color = next((c for c in _ODIT_COLORS if c in norm), None)
         return f"{group}·{color}" if color else None
