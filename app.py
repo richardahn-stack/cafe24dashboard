@@ -550,7 +550,7 @@ def render_product(orders):
     # ============================================================
     # 0. 카테고리별 판매 효율 (자체 기간 필터)
     # ============================================================
-    st.subheader("카테고리별 판매 효율")
+    st.subheader("페이지 분류별 판매 효율")
     # 월별 cat_daily → 일자별 {카테고리: {a,q}} (옛 구조=숫자 매출만도 처리)
     catd = {}
     for m, md in monthly.items():
@@ -606,9 +606,19 @@ def render_product(orders):
             aov = round(a / q) if q else 0
             delta = a - pa
             share = a / tot_a * 100
-            cols[i].metric(f"{c}", won_short(a),
-                           f"{share:.0f}% · 전기간 {'+' if delta>=0 else ''}{won_short(delta)}")
-            cols[i].caption(f"{q:,}개 · 객단가 {won_short(aov)}")
+            sign = "+" if delta >= 0 else ""
+            color = "#1D9E75" if delta >= 0 else "#E5484D"
+            cols[i].markdown(
+                f"""<div style="border:1px solid #E7EBF0;border-radius:12px;padding:14px 16px;background:#fff;">
+                <div style="font-size:0.85rem;color:#5A5E66;font-weight:600;">{c}</div>
+                <div style="font-size:1.5rem;font-weight:700;margin:4px 0;">{won_short(a)}</div>
+                <div style="font-size:0.8rem;color:#8A8F98;">매출 비중 {share:.0f}%
+                　<span style="color:{color};">{sign}{won_short(delta)}</span></div>
+                <hr style="border:none;border-top:1px solid #F0F2F5;margin:10px 0;">
+                <div style="font-size:0.9rem;">판매량 <b>{q:,}개</b></div>
+                <div style="font-size:0.9rem;">객단가 <b>{won_short(aov)}</b></div>
+                </div>""",
+                unsafe_allow_html=True)
 
         # --- 파이(매출 구성) + 추세 ---
         gcol1, gcol2 = st.columns([1, 1.4])
