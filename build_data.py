@@ -273,8 +273,9 @@ def build_product(client):
             if d:
                 option_daily.setdefault(label, {}).setdefault(d, 0)
                 option_daily[label][d] += net
-                cat_daily.setdefault(d, {}).setdefault(대, 0.0)
-                cat_daily[d][대] += amt
+                cat_daily.setdefault(d, {}).setdefault(대, {"a": 0.0, "q": 0})
+                cat_daily[d][대]["a"] += amt
+                cat_daily[d][대]["q"] += net
                 ok = _odit_key(pname, opt)
                 if ok:
                     e = odit_daily.setdefault(ok, {}).setdefault(d, {"q": 0, "a": 0.0})
@@ -296,7 +297,7 @@ def build_product(client):
         "carrier_models": {k: round(v) for k, v in model_amount.most_common()},
         "ranking": ranking,
         "option_daily": option_daily,
-        "cat_daily": {d: {k: round(v) for k, v in cats.items()}
+        "cat_daily": {d: {k: {"a": round(v["a"]), "q": v["q"]} for k, v in cats.items()}
                       for d, cats in sorted(cat_daily.items())},
         "odit_daily": {k: {d: {"q": e["q"], "a": round(e["a"])} for d, e in m.items()}
                        for k, m in odit_daily.items()},

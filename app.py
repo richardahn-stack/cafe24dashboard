@@ -294,7 +294,8 @@ def render_sales(orders):
         daily_inch = {}                      # 'YYYY-MM-DD' -> {인치: 수량}
         for m, md in monthly.items():
             for dt, cats in md.get("cat_daily", {}).items():
-                daily_amt[dt] = daily_amt.get(dt, 0) + sum(cats.values())
+                s = sum((c["a"] if isinstance(c, dict) else c) for c in cats.values())
+                daily_amt[dt] = daily_amt.get(dt, 0) + s
             for key, daymap in md.get("odit_daily", {}).items():
                 grp = key.split("·")[0]
                 if grp not in ODIT_INCH:
@@ -545,6 +546,114 @@ def render_product(orders):
     if not monthly:
         st.info("월별 누적 데이터가 없어요. (data/monthly/*.json 필요 — backfill 후 push)")
         return
+
+    # ============================================================
+    # 0. 카테고리별 판매 효율 (자체 기간 필터)
+    # ============================================================
+    st.subheader("카테고리별 판매 효율")
+    # 월별 cat_daily → 일자별 {카테고리: {a,q}} (옛 구조=숫자 매출만도 처리)
+    catd = {}
+    for m, md in monthly.items():
+        for dt, cats in md.get("cat_daily", {}).items():
+            for c, v in cats.items():
+                a = v["a"] if isinstance(v, dict) else v
+                q = v["q"] if isinstance(v, dict) else 0
+                cell = catd.setdefault(dt, {}).setdefault(c, {"a": 0, "q": 0})
+                cell["a"] += a
+                cell["q"] += q
+    cat_days = sorted(catd.keys())
+    if cat_days:
+        cdmin = date.fromisoformat(cat_days[0])
+        cdmax = date.fromisoformat(cat_days[-1])
+        cf1, cf2 = st.columns([2, 1])
+        with cf1:
+            crng = st.date_input("카테고리 분석 기간",
+                                 (max(cdmin, cdmax - timedelta(days=6)), cdmax),
+                                 min_value=cdmin, max_value=cdmax, key="cat_range")
+        with cf2:
+            cunit = st.radio("단위", ["일", "주", "월"], horizontal=True, index=0, key="cat_unit")
+        if isinstance(crng, tuple) and len(crng) == 2:
+            c_from, c_to = crng
+        else:
+            c_from = c_to = crng if not isinstance(crng, tuple) else cdmin
+        c_span = (c_to - c_from).days + 1
+        cp_to = c_from - timedelta(days=1)
+        cp_from = cp_to - timedelta(days=c_span - 1)
+
+        CAT_ORDER = ["캐리어", "악세사리", "합구매 악세사리", "프로모션", "미분류"]
+        CAT_HEX = {"캐리어": "#378ADD", "악세사리": "#3FA972", "합구매 악세사리": "#E0A800",
+                   "프로모션": "#E5484D", "미분류": "#B8BCC2"}
+
+        def cat_agg(d_from, d_to):
+            agg = {}
+            for dt in cat_days:
+                dd = date.fromisoformat(dt)
+                if d_from <= dd <= d_to:
+                    for c, v in catd[dt].items():
+                        t = agg.setdefault(c, {"a": 0, "q": 0}); t["a"] += v["a"]; t["q"] += v["q"]
+            return agg
+        cur_cat = cat_agg(c_from, c_to)
+        prev_cat = cat_agg(cp_from, cp_to)
+        st.caption(f"현재: {c_from} ~ {c_to} ({c_span}일) · 비교: {cp_from} ~ {cp_to}")
+
+        # --- 효율 카드 ---
+        tot_a = sum(v["a"] for v in cur_cat.values()) or 1
+        present = [c for c in CAT_ORDER if c in cur_cat]
+        cols = st.columns(len(present) if present else 1)
+        for i, c in enumerate(present):
+            a = cur_cat[c]["a"]; q = cur_cat[c]["q"]
+            pa = prev_cat.get(c, {}).get("a", 0)
+            aov = round(a / q) if q else 0
+            delta = a - pa
+            share = a / tot_a * 100
+            cols[i].metric(f"{c}", won_short(a),
+                           f"{share:.0f}% · 전기간 {'+' if delta>=0 else ''}{won_short(delta)}")
+            cols[i].caption(f"{q:,}개 · 객단가 {won_short(aov)}")
+
+        # --- 파이(매출 구성) + 추세 ---
+        gcol1, gcol2 = st.columns([1, 1.4])
+        with gcol1:
+            st.markdown("**매출 구성**")
+            names = [c for c in present if cur_cat[c]["a"] > 0]
+            if names:
+                fig = px.pie(values=[cur_cat[c]["a"] for c in names], names=names, hole=0.5,
+                             color=names, color_discrete_map=CAT_HEX)
+                fig.update_traces(textinfo="percent+label")
+                fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
+                                  showlegend=False)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        with gcol2:
+            st.markdown("**카테고리별 매출 추이**")
+
+            def cbucket(dt_str):
+                dd = date.fromisoformat(dt_str)
+                if cunit == "일":
+                    return dt_str
+                if cunit == "월":
+                    return dt_str[:7]
+                iso = dd.isocalendar()
+                return f"{iso[0]}-W{iso[1]:02d}"
+            trend = {}
+            for dt in cat_days:
+                dd = date.fromisoformat(dt)
+                if not (c_from <= dd <= c_to):
+                    continue
+                b = cbucket(dt)
+                for c, v in catd[dt].items():
+                    trend.setdefault(b, {}).setdefault(c, 0)
+                    trend[b][c] += v["a"]
+            bks = sorted(trend.keys())
+            if bks:
+                fig = go.Figure()
+                for c in present:
+                    fig.add_trace(go.Bar(x=bks, y=[trend[b].get(c, 0) for b in bks],
+                                         name=c, marker_color=CAT_HEX.get(c, "#999")))
+                fig.update_layout(barmode="stack", height=300,
+                                  margin=dict(t=10, b=10, l=10, r=10), plot_bgcolor="white",
+                                  yaxis=dict(gridcolor="#EEF1F5", tickformat=","),
+                                  legend=dict(orientation="h", y=1.15))
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.divider()
 
     COLOR_HEX = {
         "화이트": "#E8EAED", "실버": "#B8BCC2", "다크그레이": "#5A5E66", "블랙": "#23262B",
