@@ -183,7 +183,7 @@ def build_product(client):
     import re as _re
     _ODIT_COLORS = ["화이트", "실버", "다크그레이", "블랙", "솔티블루",
                     "펄스레드", "아이시핑크", "웻그린"]
-    _EXCLUDE = ["임직원", "테스트", "POP-UP", "PRE-ORDER", "몬딱", "쿼디"]
+    _EXCLUDE = ["테스트", "POP-UP", "PRE-ORDER", "몬딱", "쿼디"]  # 임직원은 색상 집계에 포함
 
     def _odit_key(pname, opt):
         text = (pname or "") + " " + (opt or "")
