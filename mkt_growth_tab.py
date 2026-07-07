@@ -93,25 +93,32 @@ def render_mkt_tab():
     st.title("MKT 그로스 분석")
     st.caption("일별 마케팅 리포트(daily report 시트)를 채널별 매출·광고 효율로 분석합니다.")
 
-    default_url = ""
+    # 자동 연동: 아래 기본 URL을 사용 (Secrets에 MKT_SHEET_URL이 있으면 그것 우선)
+    DEFAULT_SHEET_URL = ("https://docs.google.com/spreadsheets/d/"
+                         "1MHA572md96wxuos5x2EMuMiMmguWicea0nJTczjlLns/edit?gid=1873639498#gid=1873639498")
+    sheet_url = DEFAULT_SHEET_URL
     try:
-        default_url = st.secrets.get("MKT_SHEET_URL", "")
+        sheet_url = st.secrets.get("MKT_SHEET_URL", DEFAULT_SHEET_URL) or DEFAULT_SHEET_URL
     except Exception:
         pass
-    url = st.text_input("구글 시트 URL (daily report 시트)", value=default_url,
-                        placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=...",
-                        help="daily report 탭을 연 URL(gid 포함). '링크가 있는 모든 사용자-보기' 공유 필요.")
-    if not url:
-        st.info("daily report 시트 URL을 넣으면 분석을 시작합니다.")
-        return
-    csv_url = _to_csv_url(url)
+
+    with st.expander("데이터 소스 (구글 시트)"):
+        st.caption("기본 시트가 자동 연동됩니다. 다른 시트를 보려면 아래에 URL을 붙여넣으세요.")
+        custom = st.text_input("구글 시트 URL", value="",
+                               placeholder="비워두면 기본 시트를 사용합니다",
+                               help="daily report 탭을 연 URL(gid 포함). '링크가 있는 모든 사용자-보기' 공유 필요.")
+        if custom.strip():
+            sheet_url = custom.strip()
+
+    csv_url = _to_csv_url(sheet_url)
     if not csv_url:
         st.error("구글 시트 URL 형식이 아니에요.")
         return
     try:
         df = _load_daily(csv_url)
     except Exception as e:
-        st.error(f"시트를 불러오지 못했어요: {e}")
+        st.error(f"시트를 불러오지 못했어요: {e}\n\n"
+                 "시트가 '링크가 있는 모든 사용자에게 공개(보기)'로 설정됐는지 확인하세요.")
         return
     if df.empty:
         st.warning("날짜로 인식되는 데이터 행이 없어요. daily report 시트가 맞는지 확인하세요.")
