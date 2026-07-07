@@ -13,6 +13,7 @@ import streamlit as st
 
 from cafe24_client import Cafe24Client
 from classify import classify
+from mkt_growth_tab import render_mkt_tab
 
 st.set_page_config(page_title="자사몰 그로스 대시보드", layout="wide")
 
@@ -232,7 +233,8 @@ def save_inventory_snapshot(inventory):
 with st.sidebar:
     st.title("📊 그로스 대시보드")
     page = st.radio("대시보드 이동",
-                    ["매출 대시보드", "상품 대시보드", "재고 대시보드"])
+                    ["매출 대시보드", "상품 대시보드", "재고 대시보드",
+                     "MKT 그로스 분석"])
     st.divider()
 
     # ── 데이터 새로고침: GitHub Actions 원격 실행 ──
@@ -1417,5 +1419,7 @@ if page == "매출 대시보드":
     render_sales(orders)
 elif page == "상품 대시보드":
     render_product(orders)
-else:
+elif page == "재고 대시보드":
     render_inventory(orders)
+else:
+    render_mkt_tab()
