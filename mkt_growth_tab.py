@@ -121,77 +121,128 @@ def _delta_str(cur, prev):
     return f"{'+' if p >= 0 else ''}{p:.0f}%"
 
 
+def _pie(values, names, colors=None):
+    fig = go.Figure(go.Pie(values=values, labels=names, hole=0.5,
+                           marker=dict(colors=colors) if colors else None,
+                           sort=False))
+    fig.update_traces(textinfo="percent", textfont_size=11)
+    fig.update_layout(height=260, margin=dict(t=30, b=10, l=10, r=10),
+                      showlegend=True, legend=dict(orientation="h", y=-0.1, font=dict(size=10)))
+    return fig
+
+
 def _render_growth(df):
-    st.header("🚀 그로스 (최근 7일 vs 이전 7일)")
-    # 실적 있는 마지막 날 기준 최근 7일 / 직전 7일
+    st.header("🚀 그로스")
+
+    # ---- 날짜 필터 (현재 기간 vs 직전 동일 기간) ----
     valid = df[df["dtc_sales"] > 0]
     if valid.empty:
         st.info("실적 데이터가 없어요.")
         return
-    last = valid["date"].max()
-    cur = df[(df["date"] > last - timedelta(days=7)) & (df["date"] <= last)]
-    prev = df[(df["date"] > last - timedelta(days=14)) & (df["date"] <= last - timedelta(days=7))]
-    st.caption(f"최근 7일: {last - timedelta(days=6)} ~ {last}  ·  "
-               f"이전 7일: {last - timedelta(days=13)} ~ {last - timedelta(days=7)}")
+    dmin = df["date"].min()
+    dmax = valid["date"].max()
+    fc1, fc2 = st.columns([2, 1])
+    with fc1:
+        rng = st.date_input("기간", (dmax - timedelta(days=6), dmax),
+                            min_value=dmin, max_value=dmax, key="growth_range")
+    if isinstance(rng, tuple) and len(rng) == 2:
+        c_from, c_to = rng
+    else:
+        c_from = c_to = rng if not isinstance(rng, tuple) else dmax
+    span = (c_to - c_from).days + 1
+    p_to = c_from - timedelta(days=1)
+    p_from = p_to - timedelta(days=span - 1)
+    with fc2:
+        st.caption(f"현재: {c_from} ~ {c_to} ({span}일)\n\n비교: {p_from} ~ {p_to}")
+
+    cur = df[(df["date"] >= c_from) & (df["date"] <= c_to)]
+    prev = df[(df["date"] >= p_from) & (df["date"] <= p_to)]
 
     def s(frame, col):
         return frame[col].sum() if col in frame else 0
 
-    # ---------- 1. 매출 ----------
-    st.markdown("#### 1. 매출")
-    sale_ch = {"자사몰": "dtc_sales", "네이버": "ss_sales", "쿠팡": "coupang_sales", "기타": "etc_sales"}
-    cur_total = sum(s(cur, c) for c in sale_ch.values())
-    prev_total = sum(s(prev, c) for c in sale_ch.values())
-    m0 = st.columns(len(sale_ch) + 1)
-    m0[0].metric("전체 매출", _won_short(cur_total), _delta_str(cur_total, prev_total))
-    for i, (name, col) in enumerate(sale_ch.items()):
-        cv, pv = s(cur, col), s(prev, col)
-        share = cv / cur_total * 100 if cur_total else 0
-        m0[i + 1].metric(name, _won_short(cv), f"{share:.0f}% · {_delta_str(cv, pv)}")
+    # 공통: 파이 2개 + 비교 테이블 렌더
+    def block(title, ch_map, colors):
+        st.markdown(f"#### {title}")
+        cur_tot = sum(s(cur, c) for c in ch_map.values()) or 1
+        prev_tot = sum(s(prev, c) for c in ch_map.values()) or 1
+        names = list(ch_map.keys())
+        cur_vals = [s(cur, ch_map[n]) for n in names]
+        prev_vals = [s(prev, ch_map[n]) for n in names]
+        col_colors = [colors[n] for n in names]
+        p1, p2, p3 = st.columns([1, 1, 1.4])
+        with p1:
+            st.caption("현재 기간")
+            shown = [(n, v, c) for n, v, c in zip(names, cur_vals, col_colors) if v > 0]
+            if shown:
+                st.plotly_chart(_pie([x[1] for x in shown], [x[0] for x in shown],
+                                     [x[2] for x in shown]),
+                                use_container_width=True, config={"displayModeBar": False})
+        with p2:
+            st.caption("비교 기간")
+            shownp = [(n, v, c) for n, v, c in zip(names, prev_vals, col_colors) if v > 0]
+            if shownp:
+                st.plotly_chart(_pie([x[1] for x in shownp], [x[0] for x in shownp],
+                                     [x[2] for x in shownp]),
+                                use_container_width=True, config={"displayModeBar": False})
+        with p3:
+            st.caption("비교 표")
+            rows = []
+            for n in names:
+                cv, pv = s(cur, ch_map[n]), s(prev, ch_map[n])
+                if cv == 0 and pv == 0:
+                    continue
+                rows.append({"채널": n, "현재": cv, "비중": cv / cur_tot * 100,
+                             "이전": pv, "증감": _delta_str(cv, pv)})
+            # 합계 행
+            ct = sum(cur_vals); pt = sum(prev_vals)
+            rows.append({"채널": "합계", "현재": ct, "비중": 100.0, "이전": pt,
+                         "증감": _delta_str(ct, pt)})
+            dfr = pd.DataFrame(rows)
 
-    # ---------- 2. 광고비 ----------
-    st.markdown("#### 2. 광고비")
+            def ud(v):
+                if isinstance(v, str) and v.startswith("+"): return "color:#1D9E75;font-weight:600;"
+                if isinstance(v, str) and v.startswith("-"): return "color:#E5484D;font-weight:600;"
+                return ""
+            st.dataframe(dfr.style.map(ud, subset=["증감"]).format(
+                {"현재": "₩{:,.0f}", "비중": "{:.0f}%", "이전": "₩{:,.0f}"}),
+                hide_index=True, use_container_width=True)
+
+    # ---- 1. 매출 ----
+    sale_ch = {"자사몰": "dtc_sales", "네이버": "ss_sales", "쿠팡": "coupang_sales", "기타": "etc_sales"}
+    sale_hex = {"자사몰": "#378ADD", "네이버": "#3FA972", "쿠팡": "#E0A800", "기타": "#B8BCC2"}
+    block("1. 매출", sale_ch, sale_hex)
+
+    # ---- 2. 광고비 ----
     ad_ch = {"메타": "ad_메타_cost", "구글": "ad_구글_cost", "GFA": "ad_GFA_cost",
              "브랜드검색": "ad_네이버 브랜드검색_cost", "네이버SA": "ad_네이버 SA_cost",
              "CRM": "crm_cost", "인플루언서": "influ_cost"}
-    cur_ad = sum(s(cur, c) for c in ad_ch.values())
-    prev_ad = sum(s(prev, c) for c in ad_ch.values())
-    st.metric("전체 광고비", _won_short(cur_ad), _delta_str(cur_ad, prev_ad))
-    present = [(n, c) for n, c in ad_ch.items() if s(cur, c) > 0 or s(prev, c) > 0]
-    per_row = 4
-    for start in range(0, len(present), per_row):
-        chunk = present[start:start + per_row]
-        cols = st.columns(per_row)
-        for j, (name, col) in enumerate(chunk):
-            cv, pv = s(cur, col), s(prev, col)
-            share = cv / cur_ad * 100 if cur_ad else 0
-            cols[j].metric(name, _won_short(cv), f"{share:.0f}% · {_delta_str(cv, pv)}")
+    ad_hex = {"메타": "#4267B2", "구글": "#EA4335", "GFA": "#03C75A", "브랜드검색": "#1EC800",
+              "네이버SA": "#00B843", "CRM": "#E0A800", "인플루언서": "#B060D0"}
+    block("2. 광고비", ad_ch, ad_hex)
 
-    # ---------- 3. ROAS ----------
+    # ---- 3. ROAS (카드) ----
     st.markdown("#### 3. ROAS")
     def roas(sales, cost):
         return sales / cost if cost else 0
-    # 전체
-    cur_roas = roas(cur_total, cur_ad)
-    prev_roas = roas(prev_total, prev_ad)
-    # 자사몰 = 자사몰매출 / (메타+구글+브검)
+    cur_sales = sum(s(cur, c) for c in sale_ch.values())
+    prev_sales = sum(s(prev, c) for c in sale_ch.values())
+    cur_ad = sum(s(cur, c) for c in ad_ch.values())
+    prev_ad = sum(s(prev, c) for c in ad_ch.values())
     dtc_ad_c = s(cur, "ad_메타_cost") + s(cur, "ad_구글_cost") + s(cur, "ad_네이버 브랜드검색_cost")
     dtc_ad_p = s(prev, "ad_메타_cost") + s(prev, "ad_구글_cost") + s(prev, "ad_네이버 브랜드검색_cost")
-    dtc_roas_c = roas(s(cur, "dtc_sales"), dtc_ad_c)
-    dtc_roas_p = roas(s(prev, "dtc_sales"), dtc_ad_p)
-    # 네이버 = 네이버매출 / (GFA+SA)
     nv_ad_c = s(cur, "ad_GFA_cost") + s(cur, "ad_네이버 SA_cost")
     nv_ad_p = s(prev, "ad_GFA_cost") + s(prev, "ad_네이버 SA_cost")
-    nv_roas_c = roas(s(cur, "ss_sales"), nv_ad_c)
-    nv_roas_p = roas(s(prev, "ss_sales"), nv_ad_p)
+    cur_all_roas = roas(cur_sales, cur_ad); prev_all_roas = roas(prev_sales, prev_ad)
+    dtc_c = roas(s(cur, "dtc_sales"), dtc_ad_c); dtc_p = roas(s(prev, "dtc_sales"), dtc_ad_p)
+    nv_c = roas(s(cur, "ss_sales"), nv_ad_c); nv_p = roas(s(prev, "ss_sales"), nv_ad_p)
     r = st.columns(3)
-    r[0].metric("전체 ROAS", f"{cur_roas:.2f}", _delta_str(cur_roas, prev_roas))
-    r[1].metric("자사몰 ROAS", f"{dtc_roas_c:.2f}", _delta_str(dtc_roas_c, dtc_roas_p),
+    r[0].metric("전체 ROAS", f"{cur_all_roas:.2f}", _delta_str(cur_all_roas, prev_all_roas))
+    r[1].metric("자사몰 ROAS", f"{dtc_c:.2f}", _delta_str(dtc_c, dtc_p),
                 help="자사몰 매출 / (메타+구글+브랜드검색)")
-    r[2].metric("네이버 ROAS", f"{nv_roas_c:.2f}", _delta_str(nv_roas_c, nv_roas_p),
+    r[2].metric("네이버 ROAS", f"{nv_c:.2f}", _delta_str(nv_c, nv_p),
                 help="네이버 매출 / (GFA+네이버SA)")
 
-    # 인플루언서·CRM: 집행 날짜 표시
     def spend_dates(frame, col):
         if col not in frame:
             return []
