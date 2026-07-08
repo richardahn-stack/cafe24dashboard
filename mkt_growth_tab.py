@@ -161,6 +161,17 @@ def _won_short(n):
     return f"{n:,.0f}"
 
 
+def _won_aov(n):
+    """객단가용: 만원 단위 소수 첫째자리(=천원 단위)까지. 예: 439,000 → 43.9만"""
+    try:
+        n = float(n)
+    except Exception:
+        return "-"
+    if abs(n) >= 1e4:
+        return f"{n/1e4:.1f}만"
+    return f"{n:,.0f}"
+
+
 def _delta_str(cur, prev):
     if prev == 0:
         return ("+∞" if cur > 0 else "0%")
@@ -365,7 +376,7 @@ def _render_daily_checkin(df):
     metrics = [
         ("매출", "dtc_sales", "won"), ("유입수", "dtc_visit", "num"),
         ("전환", "dtc_conv", "num"), ("전환율", "dtc_cvr", "pct"),
-        ("객단가", "dtc_aov", "won"),
+        ("객단가", "dtc_aov", "aov"),
     ]
     st.caption(f"선택일: {sel}　·　전일 {d_prev}　·　WoW {d_wow}　·　MoM {d_mom}　·　YoY {d_yoy}")
     for label, col, fmt in metrics:
@@ -376,6 +387,8 @@ def _render_daily_checkin(df):
                 return "-"
             if fmt == "won":
                 return _won_short(v)
+            if fmt == "aov":
+                return _won_aov(v)
             if fmt == "pct":
                 return f"{v*100:.2f}%"
             return f"{v:,.0f}"
@@ -515,7 +528,7 @@ def _render_page_cards():
               <div><div style="font-size:0.72rem;color:#8A8F98;">매출</div>
                    <div style="font-size:1.25rem;font-weight:700;">{_won_short(a)}</div></div>
               <div><div style="font-size:0.72rem;color:#8A8F98;">객단가</div>
-                   <div style="font-size:1.25rem;font-weight:700;">{_won_short(aov)}</div></div>
+                   <div style="font-size:1.25rem;font-weight:700;">{_won_aov(aov)}</div></div>
               <div><div style="font-size:0.72rem;color:#8A8F98;">취소율</div>
                    <div style="font-size:1.25rem;font-weight:700;">{cancel_rate:.0f}%
                    <span style="font-size:0.7rem;color:#8A8F98;font-weight:400;">({cancel}개)</span></div></div>
