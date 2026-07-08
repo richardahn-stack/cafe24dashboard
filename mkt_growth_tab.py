@@ -260,10 +260,14 @@ def _render_growth(df):
         figc = go.Figure()
         figc.add_trace(go.Bar(x=xs, y=yt, name="인플루언서 YT", marker_color="#B060D0"))
         figc.add_trace(go.Bar(x=xs, y=pa, name="인플루언서 PA", marker_color="#8E44AD"))
-        figc.add_trace(go.Bar(x=xs, y=crm, name="CRM", marker_color="#E0A800"))
+        figc.add_trace(go.Scatter(x=xs, y=crm, name="CRM", yaxis="y2",
+                                  mode="lines+markers", line=dict(color="#E0A800", width=2),
+                                  marker=dict(size=6)))
         figc.update_layout(barmode="stack", height=300, plot_bgcolor="white",
                            margin=dict(t=10, b=10, l=10, r=10),
-                           yaxis=dict(title="집행 광고비", gridcolor="#EEF1F5", tickformat=","),
+                           yaxis=dict(title="인플루언서 광고비", gridcolor="#EEF1F5", tickformat=","),
+                           yaxis2=dict(title="CRM 광고비", overlaying="y", side="right",
+                                       showgrid=False, tickformat=","),
                            xaxis=dict(title=None),
                            legend=dict(orientation="h", y=1.15))
         st.plotly_chart(figc, use_container_width=True, config={"displayModeBar": False})
