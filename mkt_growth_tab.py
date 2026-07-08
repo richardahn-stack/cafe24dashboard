@@ -237,25 +237,58 @@ def _render_growth(df):
     dtc_c = roas(s(cur, "dtc_sales"), dtc_ad_c); dtc_p = roas(s(prev, "dtc_sales"), dtc_ad_p)
     nv_c = roas(s(cur, "ss_sales"), nv_ad_c); nv_p = roas(s(prev, "ss_sales"), nv_ad_p)
     r = st.columns(3)
-    r[0].metric("전체 ROAS", f"{cur_all_roas:.2f}", _delta_str(cur_all_roas, prev_all_roas))
-    r[1].metric("자사몰 ROAS", f"{dtc_c:.2f}", _delta_str(dtc_c, dtc_p),
+    r[0].metric("전체 ROAS", f"{cur_all_roas*100:.0f}%", _delta_str(cur_all_roas, prev_all_roas))
+    r[1].metric("자사몰 ROAS", f"{dtc_c*100:.0f}%", _delta_str(dtc_c, dtc_p),
                 help="자사몰 매출 / (메타+구글+브랜드검색)")
-    r[2].metric("네이버 ROAS", f"{nv_c:.2f}", _delta_str(nv_c, nv_p),
+    r[2].metric("네이버 ROAS", f"{nv_c*100:.0f}%", _delta_str(nv_c, nv_p),
                 help="네이버 매출 / (GFA+네이버SA)")
 
-    def spend_dates(frame, col):
-        if col not in frame:
-            return []
-        return [d.strftime("%m/%d") for d, v in zip(frame["date"], frame[col]) if v and v > 0]
-    influ_days = spend_dates(cur, "influ_cost")
-    crm_days = spend_dates(cur, "crm_cost")
-    notes = []
-    if influ_days:
-        notes.append(f"인플루언서 집행일: {', '.join(influ_days)} (합계 {_won_short(s(cur,'influ_cost'))})")
-    if crm_days:
-        notes.append(f"CRM 집행일: {', '.join(crm_days)} (합계 {_won_short(s(cur,'crm_cost'))})")
-    if notes:
-        st.caption("　|　".join(notes))
+    # ---- 인플루언서 · CRM 집행 달력 (현재+비교 기간 전체) ----
+    st.markdown("#### 인플루언서 · CRM 집행 일정")
+    cal_from, cal_to = p_from, c_to   # 비교 시작 ~ 현재 끝
+    cal = df[(df["date"] >= cal_from) & (df["date"] <= cal_to)].copy()
+    cal_map = {}
+    for _, row in cal.iterrows():
+        cal_map[row["date"]] = {"crm": row.get("crm_cost", 0) or 0,
+                                "influ": row.get("influ_cost", 0) or 0}
+    # 주 단위(월~일) 그리드 생성
+    import datetime as _dt
+    start_monday = cal_from - _dt.timedelta(days=cal_from.weekday())
+    end_sunday = cal_to + _dt.timedelta(days=(6 - cal_to.weekday()))
+    weeks = []
+    d = start_monday
+    while d <= end_sunday:
+        week = []
+        for _ in range(7):
+            week.append(d)
+            d += _dt.timedelta(days=1)
+        weeks.append(week)
+
+    st.caption("🟣 인플루언서　🟠 CRM　(집행일에 금액 표시, 현재 기간은 진하게)")
+    # HTML 표로 달력 렌더
+    dow = ["월", "화", "수", "목", "금", "토", "일"]
+    html = ['<table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">']
+    html.append("<tr>" + "".join(f'<th style="padding:4px;color:#8A8F98;">{w}</th>' for w in dow) + "</tr>")
+    for week in weeks:
+        html.append("<tr>")
+        for day in week:
+            in_range = cal_from <= day <= cal_to
+            in_cur = c_from <= day <= c_to
+            info = cal_map.get(day, {})
+            crm = info.get("crm", 0); influ = info.get("influ", 0)
+            bg = "#FFFFFF" if in_cur else "#F7F8FA"
+            opacity = "1" if in_range else "0.35"
+            cell = f'<div style="font-weight:{"700" if in_cur else "400"};color:#23262B;">{day.day}</div>'
+            if influ > 0:
+                cell += f'<div style="color:#B060D0;font-size:10px;">🟣{_won_short(influ)}</div>'
+            if crm > 0:
+                cell += f'<div style="color:#E0A800;font-size:10px;">🟠{_won_short(crm)}</div>'
+            border = "2px solid #378ADD" if in_cur else "1px solid #EEF1F5"
+            html.append(f'<td style="border:{border};background:{bg};opacity:{opacity};'
+                        f'padding:4px;height:52px;vertical-align:top;">{cell}</td>')
+        html.append("</tr>")
+    html.append("</table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
     st.divider()
 
 
@@ -386,7 +419,7 @@ def render_mkt_tab():
             fig.add_trace(go.Bar(x=addf["채널"], y=addf["광고비"], name="광고비", marker_color="#C9D6E5"))
             fig.add_trace(go.Scatter(x=addf["채널"], y=addf["ROAS"], name="ROAS", yaxis="y2",
                                      mode="markers+text", marker=dict(size=12, color="#E0A800"),
-                                     text=[f"{r:.1f}" for r in addf["ROAS"]], textposition="top center"))
+                                     text=[f"{r*100:.0f}%" for r in addf["ROAS"]], textposition="top center"))
             fig.update_layout(height=320, plot_bgcolor="white", margin=dict(t=10, b=10, l=10, r=10),
                               yaxis=dict(title="광고비", gridcolor="#EEF1F5", tickformat=","),
                               yaxis2=dict(title="ROAS", overlaying="y", side="right", showgrid=False),
@@ -394,11 +427,13 @@ def render_mkt_tab():
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with a2:
             st.markdown("**요약 표**")
-            st.dataframe(addf.style.format({"광고비": "₩{:,.0f}", "광고매출": "₩{:,.0f}", "ROAS": "{:.2f}"}),
+            addf_disp = addf.copy()
+            addf_disp["ROAS"] = addf_disp["ROAS"] * 100
+            st.dataframe(addf_disp.style.format({"광고비": "₩{:,.0f}", "광고매출": "₩{:,.0f}", "ROAS": "{:.0f}%"}),
                          hide_index=True, use_container_width=True)
         tc = addf["광고비"].sum(); ts = addf["광고매출"].sum()
         if tc:
-            st.caption(f"총 광고비 {_won_short(tc)} · 총 광고매출 {_won_short(ts)} · 통합 ROAS {ts/tc:.2f}")
+            st.caption(f"총 광고비 {_won_short(tc)} · 총 광고매출 {_won_short(ts)} · 통합 ROAS {ts/tc*100:.0f}%")
 
     # =========================================================
     # 3. 자사몰 상세
