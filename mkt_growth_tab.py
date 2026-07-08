@@ -114,6 +114,100 @@ def _won_short(n):
     return f"{n:,.0f}"
 
 
+def _delta_str(cur, prev):
+    if prev == 0:
+        return ("+∞" if cur > 0 else "0%")
+    p = (cur - prev) / prev * 100
+    return f"{'+' if p >= 0 else ''}{p:.0f}%"
+
+
+def _render_growth(df):
+    st.header("🚀 그로스 (최근 7일 vs 이전 7일)")
+    # 실적 있는 마지막 날 기준 최근 7일 / 직전 7일
+    valid = df[df["dtc_sales"] > 0]
+    if valid.empty:
+        st.info("실적 데이터가 없어요.")
+        return
+    last = valid["date"].max()
+    cur = df[(df["date"] > last - timedelta(days=7)) & (df["date"] <= last)]
+    prev = df[(df["date"] > last - timedelta(days=14)) & (df["date"] <= last - timedelta(days=7))]
+    st.caption(f"최근 7일: {last - timedelta(days=6)} ~ {last}  ·  "
+               f"이전 7일: {last - timedelta(days=13)} ~ {last - timedelta(days=7)}")
+
+    def s(frame, col):
+        return frame[col].sum() if col in frame else 0
+
+    # ---------- 1. 매출 ----------
+    st.markdown("#### 1. 매출")
+    sale_ch = {"자사몰": "dtc_sales", "네이버": "ss_sales", "쿠팡": "coupang_sales", "기타": "etc_sales"}
+    cur_total = sum(s(cur, c) for c in sale_ch.values())
+    prev_total = sum(s(prev, c) for c in sale_ch.values())
+    m0 = st.columns(len(sale_ch) + 1)
+    m0[0].metric("전체 매출", _won_short(cur_total), _delta_str(cur_total, prev_total))
+    for i, (name, col) in enumerate(sale_ch.items()):
+        cv, pv = s(cur, col), s(prev, col)
+        share = cv / cur_total * 100 if cur_total else 0
+        m0[i + 1].metric(name, _won_short(cv), f"{share:.0f}% · {_delta_str(cv, pv)}")
+
+    # ---------- 2. 광고비 ----------
+    st.markdown("#### 2. 광고비")
+    ad_ch = {"메타": "ad_메타_cost", "구글": "ad_구글_cost", "GFA": "ad_GFA_cost",
+             "브랜드검색": "ad_네이버 브랜드검색_cost", "네이버SA": "ad_네이버 SA_cost",
+             "CRM": "crm_cost", "인플루언서": "influ_cost"}
+    cur_ad = sum(s(cur, c) for c in ad_ch.values())
+    prev_ad = sum(s(prev, c) for c in ad_ch.values())
+    st.metric("전체 광고비", _won_short(cur_ad), _delta_str(cur_ad, prev_ad))
+    present = [(n, c) for n, c in ad_ch.items() if s(cur, c) > 0 or s(prev, c) > 0]
+    per_row = 4
+    for start in range(0, len(present), per_row):
+        chunk = present[start:start + per_row]
+        cols = st.columns(per_row)
+        for j, (name, col) in enumerate(chunk):
+            cv, pv = s(cur, col), s(prev, col)
+            share = cv / cur_ad * 100 if cur_ad else 0
+            cols[j].metric(name, _won_short(cv), f"{share:.0f}% · {_delta_str(cv, pv)}")
+
+    # ---------- 3. ROAS ----------
+    st.markdown("#### 3. ROAS")
+    def roas(sales, cost):
+        return sales / cost if cost else 0
+    # 전체
+    cur_roas = roas(cur_total, cur_ad)
+    prev_roas = roas(prev_total, prev_ad)
+    # 자사몰 = 자사몰매출 / (메타+구글+브검)
+    dtc_ad_c = s(cur, "ad_메타_cost") + s(cur, "ad_구글_cost") + s(cur, "ad_네이버 브랜드검색_cost")
+    dtc_ad_p = s(prev, "ad_메타_cost") + s(prev, "ad_구글_cost") + s(prev, "ad_네이버 브랜드검색_cost")
+    dtc_roas_c = roas(s(cur, "dtc_sales"), dtc_ad_c)
+    dtc_roas_p = roas(s(prev, "dtc_sales"), dtc_ad_p)
+    # 네이버 = 네이버매출 / (GFA+SA)
+    nv_ad_c = s(cur, "ad_GFA_cost") + s(cur, "ad_네이버 SA_cost")
+    nv_ad_p = s(prev, "ad_GFA_cost") + s(prev, "ad_네이버 SA_cost")
+    nv_roas_c = roas(s(cur, "ss_sales"), nv_ad_c)
+    nv_roas_p = roas(s(prev, "ss_sales"), nv_ad_p)
+    r = st.columns(3)
+    r[0].metric("전체 ROAS", f"{cur_roas:.2f}", _delta_str(cur_roas, prev_roas))
+    r[1].metric("자사몰 ROAS", f"{dtc_roas_c:.2f}", _delta_str(dtc_roas_c, dtc_roas_p),
+                help="자사몰 매출 / (메타+구글+브랜드검색)")
+    r[2].metric("네이버 ROAS", f"{nv_roas_c:.2f}", _delta_str(nv_roas_c, nv_roas_p),
+                help="네이버 매출 / (GFA+네이버SA)")
+
+    # 인플루언서·CRM: 집행 날짜 표시
+    def spend_dates(frame, col):
+        if col not in frame:
+            return []
+        return [d.strftime("%m/%d") for d, v in zip(frame["date"], frame[col]) if v and v > 0]
+    influ_days = spend_dates(cur, "influ_cost")
+    crm_days = spend_dates(cur, "crm_cost")
+    notes = []
+    if influ_days:
+        notes.append(f"인플루언서 집행일: {', '.join(influ_days)} (합계 {_won_short(s(cur,'influ_cost'))})")
+    if crm_days:
+        notes.append(f"CRM 집행일: {', '.join(crm_days)} (합계 {_won_short(s(cur,'crm_cost'))})")
+    if notes:
+        st.caption("　|　".join(notes))
+    st.divider()
+
+
 def render_mkt_tab():
     st.title("MKT 그로스 분석")
     st.caption("일별 마케팅 리포트(daily report) 기반 채널 매출·광고 효율 분석.")
@@ -143,6 +237,11 @@ def render_mkt_tab():
     if df.empty:
         st.warning("데이터 행이 없어요.")
         return
+
+    # =========================================================
+    # 0. 그로스 섹션 (최근 7일 vs 이전 7일) — 자체 계산, 필터 독립
+    # =========================================================
+    _render_growth(df)
 
     dmin, dmax = df["date"].min(), df["date"].max()
     # 실제 매출이 있는 마지막 날 기준으로 기본 기간
