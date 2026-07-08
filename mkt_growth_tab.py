@@ -98,7 +98,7 @@ def _load(csv_url):
                                     if c < raw.shape[1])
             rec["influ_yt"] = _num(raw.iloc[r, 144]) if 144 < raw.shape[1] else 0.0
             rec["influ_pa"] = _num(raw.iloc[r, 145]) if 145 < raw.shape[1] else 0.0
-            rec["coupang_sales"] = _num(raw.iloc[r, COUPANG_SALES]) if COUPANG_SALES < raw.shape[1] else 0.0
+            rec["coupang_sales"] = _num(raw.iloc[r, 56]) if 56 < raw.shape[1] else 0.0
             rec["coupang_ad_cost"] = _num(raw.iloc[r, COUPANG_AD[0]]) if COUPANG_AD[0] < raw.shape[1] else 0.0
             rec["coupang_ad_sales"] = _num(raw.iloc[r, COUPANG_AD[1]]) if COUPANG_AD[1] < raw.shape[1] else 0.0
             rows.append(rec)
