@@ -121,9 +121,11 @@ def _load_page_daily():
         for dt, pages in md.get("page_daily", {}).items():
             dst = out.setdefault(dt, {})
             for pno, v in pages.items():
-                cell = dst.setdefault(pno, {"q": 0, "a": 0})
+                cell = dst.setdefault(pno, {"orders": 0, "q": 0, "a": 0, "cancel": 0})
+                cell["orders"] += v.get("orders", 0)
                 cell["q"] += v.get("q", 0)
                 cell["a"] += v.get("a", 0)
+                cell["cancel"] += v.get("cancel", 0)
     return out
 
 
@@ -473,7 +475,7 @@ def _render_page_cards():
         d_yoy = sel - _dt.timedelta(days=365)
 
     def get(d, pno):
-        return page.get(d.isoformat(), {}).get(pno, {"q": 0, "a": 0})
+        return page.get(d.isoformat(), {}).get(pno, {"orders": 0, "q": 0, "a": 0, "cancel": 0})
 
     def cmp(cur, comp):
         if comp == 0:
@@ -485,36 +487,44 @@ def _render_page_cards():
     cols = st.columns(len(PAGES))
     for i, (pno, name, color) in enumerate(PAGES):
         cur = get(sel, pno)
-        q = cur["q"]; a = cur["a"]
-        aov = round(a / q) if q else 0
-        # 비교 (전환수 기준 증감)
+        orders = cur["orders"]; q = cur["q"]; a = cur["a"]; cancel = cur["cancel"]
+        aov = round(a / orders) if orders else 0          # 객단가 = 매출 / 주문수
+        # 취소율 = 취소수량 / (순수량 + 취소수량)
+        total_q = q + cancel
+        cancel_rate = (cancel / total_q * 100) if total_q else 0
+        # 비교 (주문수 기준 증감)
         comps = []
         for label, d in [("전일", d_prev), ("WoW", d_wow), ("MoM", d_mom), ("YoY", d_yoy)]:
-            cq = get(d, pno)["q"]
-            comps.append((label, cq, cmp(q, cq)))
+            co = get(d, pno)["orders"]
+            comps.append((label, co, cmp(orders, co)))
         rows_html = ""
-        for label, cq, delta in comps:
+        for label, co, delta in comps:
             dc = "#1D9E75" if delta.startswith("+") else ("#E5484D" if delta.startswith("-") else "#8A8F98")
             rows_html += (f'<tr><td style="color:#8A8F98;padding:2px 6px;">{label}</td>'
-                          f'<td style="text-align:right;padding:2px 6px;">{cq}개</td>'
+                          f'<td style="text-align:right;padding:2px 6px;">{co}건</td>'
                           f'<td style="text-align:right;color:{dc};font-weight:600;padding:2px 6px;">{delta}</td></tr>')
         card = f'''<div style="border:1px solid #E7EBF0;border-top:4px solid {color};
             border-radius:12px;padding:16px;background:#fff;">
             <div style="font-size:0.8rem;color:#8A8F98;">#{pno}</div>
-            <div style="font-size:1.05rem;font-weight:700;color:{color};margin-bottom:8px;">{name}</div>
-            <div style="display:flex;gap:14px;margin-bottom:10px;">
-              <div><div style="font-size:0.72rem;color:#8A8F98;">전환수</div>
-                   <div style="font-size:1.3rem;font-weight:700;">{q}</div></div>
+            <div style="font-size:1.05rem;font-weight:700;color:{color};margin-bottom:10px;">{name}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:12px 18px;margin-bottom:10px;">
+              <div><div style="font-size:0.72rem;color:#8A8F98;">주문수</div>
+                   <div style="font-size:1.25rem;font-weight:700;">{orders}건</div></div>
+              <div><div style="font-size:0.72rem;color:#8A8F98;">구매 상품수</div>
+                   <div style="font-size:1.25rem;font-weight:700;">{q}개</div></div>
               <div><div style="font-size:0.72rem;color:#8A8F98;">매출</div>
-                   <div style="font-size:1.3rem;font-weight:700;">{_won_short(a)}</div></div>
+                   <div style="font-size:1.25rem;font-weight:700;">{_won_short(a)}</div></div>
               <div><div style="font-size:0.72rem;color:#8A8F98;">객단가</div>
-                   <div style="font-size:1.3rem;font-weight:700;">{_won_short(aov)}</div></div>
+                   <div style="font-size:1.25rem;font-weight:700;">{_won_short(aov)}</div></div>
+              <div><div style="font-size:0.72rem;color:#8A8F98;">취소율</div>
+                   <div style="font-size:1.25rem;font-weight:700;">{cancel_rate:.0f}%
+                   <span style="font-size:0.7rem;color:#8A8F98;font-weight:400;">({cancel}개)</span></div></div>
             </div>
             <table style="width:100%;font-size:0.78rem;border-collapse:collapse;">{rows_html}</table>
-            <div style="font-size:0.68rem;color:#B8BCC2;margin-top:6px;">※ 증감은 전환수 기준</div>
+            <div style="font-size:0.68rem;color:#B8BCC2;margin-top:6px;">※ 객단가=매출÷주문수 · 증감은 주문수 기준</div>
             </div>'''
         cols[i].markdown(card, unsafe_allow_html=True)
-    st.caption("조회수·전환율은 접속 통계(mall.read_analytics) API 주소 확보 후 추가 예정이에요.")
+    st.caption("조회수·전환율은 접속 통계 API 확보 후 추가 예정이에요.")
     st.divider()
 
 
