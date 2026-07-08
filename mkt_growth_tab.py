@@ -218,9 +218,10 @@ def _render_growth(df):
     # ---- 2. 광고비 ----
     ad_ch = {"메타": "ad_메타_cost", "구글": "ad_구글_cost", "GFA": "ad_GFA_cost",
              "브랜드검색": "ad_네이버 브랜드검색_cost", "네이버SA": "ad_네이버 SA_cost",
-             "CRM": "crm_cost", "인플루언서": "influ_cost"}
+             "CRM": "crm_cost", "인플루언서 YT": "influ_yt", "인플루언서 PA": "influ_pa"}
     ad_hex = {"메타": "#4267B2", "구글": "#EA4335", "GFA": "#03C75A", "브랜드검색": "#1EC800",
-              "네이버SA": "#00B843", "CRM": "#E0A800", "인플루언서": "#B060D0"}
+              "네이버SA": "#00B843", "CRM": "#E0A800", "인플루언서 YT": "#B060D0",
+              "인플루언서 PA": "#8E44AD"}
     block("2. 광고비", ad_ch, ad_hex)
 
     # ---- 3. ROAS (카드) ----
