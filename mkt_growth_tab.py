@@ -548,8 +548,27 @@ def _render_sales_ad_trend(df):
         st.info("데이터가 없어요.")
         return
     dmin, dmax = df["date"].min(), valid["date"].max()
+
+    SALES = [
+        ("자사몰", "dtc_sales", "#378ADD"), ("네이버", "ss_sales", "#3FA972"),
+        ("쿠팡", "coupang_sales", "#E0A800"), ("기타", "etc_sales", "#B8BCC2"),
+    ]
+    ADS = [
+        ("메타", "ad_메타_cost", "#4267B2"), ("구글", "ad_구글_cost", "#EA4335"),
+        ("GFA", "ad_GFA_cost", "#03C75A"), ("인플 YT", "influ_yt", "#B060D0"),
+        ("인플 PA", "influ_pa", "#8E44AD"),
+    ]
+    sales_names = [s[0] for s in SALES]
+    ad_names = [a[0] for a in ADS]
+
     rng = st.date_input("기간", (dmax - timedelta(days=29), dmax),
                         min_value=dmin, max_value=dmax, key="trend_range")
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        sel_sales = st.multiselect("매출처", sales_names, default=sales_names, key="trend_sales")
+    with fc2:
+        sel_ads = st.multiselect("광고 매체", ad_names, default=ad_names, key="trend_ads")
+
     if isinstance(rng, tuple) and len(rng) == 2:
         d_from, d_to = rng
     else:
@@ -564,24 +583,19 @@ def _render_sales_ad_trend(df):
         return list(view[c]) if c in view else [0] * len(view)
 
     fig = go.Figure()
-    # ---- 매출 채널 (실선, 왼쪽 축 y) ----
-    sales_lines = [
-        ("자사몰", "dtc_sales", "#378ADD"), ("네이버", "ss_sales", "#3FA972"),
-        ("쿠팡", "coupang_sales", "#E0A800"), ("기타", "etc_sales", "#B8BCC2"),
-    ]
-    for name, c, color in sales_lines:
+    # ---- 매출 채널 (실선, 왼쪽 축 y) — 선택된 것만 ----
+    for name, c, color in SALES:
+        if name not in sel_sales:
+            continue
         fig.add_trace(go.Scatter(x=xs, y=col(c), name=f"매출·{name}", yaxis="y",
                                  mode="lines", line=dict(color=color, width=2)))
-    # ---- 광고비 채널 (점선, 오른쪽 축 y2) ----
-    ad_lines = [
-        ("메타", "ad_메타_cost", "#4267B2"), ("구글", "ad_구글_cost", "#EA4335"),
-        ("GFA", "ad_GFA_cost", "#03C75A"), ("인플 YT", "influ_yt", "#B060D0"),
-        ("인플 PA", "influ_pa", "#8E44AD"),
-    ]
-    for name, c, color in ad_lines:
+    # ---- 광고비 채널 (점선, 오른쪽 축 y2) — 선택된 것만 ----
+    for name, c, color in ADS:
+        if name not in sel_ads:
+            continue
         fig.add_trace(go.Scatter(x=xs, y=col(c), name=f"광고비·{name}", yaxis="y2",
                                  mode="lines", line=dict(color=color, width=1.5, dash="dot")))
-    # ---- CRM 발송일 점 (오른쪽 축, 마커만) ----
+    # ---- CRM 발송일 점 (오른쪽 축) ----
     crm_x = [x for x, v in zip(xs, col("crm_cost")) if v and v > 0]
     crm_y = [v for v in col("crm_cost") if v and v > 0]
     if crm_x:
@@ -596,7 +610,7 @@ def _render_sales_ad_trend(df):
         hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
     st.caption("실선=매출(왼쪽 축) · 점선=광고비(오른쪽 축) · 주황 다이아=CRM 발송일. "
-               "범례를 클릭하면 개별 선을 켜고 끌 수 있어요.")
+               "위 필터로 매출처·광고 매체를 선택하거나, 범례 클릭으로도 켜고 끌 수 있어요.")
     st.divider()
 
 
