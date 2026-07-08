@@ -95,6 +95,8 @@ def _load(csv_url):
             rec["crm_cost"] = _num(raw.iloc[r, CRM_COST]) if CRM_COST < raw.shape[1] else 0.0
             rec["influ_cost"] = sum(_num(raw.iloc[r, c]) for c in range(INFLU[0], INFLU[1] + 1)
                                     if c < raw.shape[1])
+            rec["influ_yt"] = _num(raw.iloc[r, 144]) if 144 < raw.shape[1] else 0.0
+            rec["influ_pa"] = _num(raw.iloc[r, 145]) if 145 < raw.shape[1] else 0.0
             rec["coupang_sales"] = _num(raw.iloc[r, COUPANG_SALES]) if COUPANG_SALES < raw.shape[1] else 0.0
             rec["coupang_ad_cost"] = _num(raw.iloc[r, COUPANG_AD[0]]) if COUPANG_AD[0] < raw.shape[1] else 0.0
             rec["coupang_ad_sales"] = _num(raw.iloc[r, COUPANG_AD[1]]) if COUPANG_AD[1] < raw.shape[1] else 0.0
@@ -243,52 +245,30 @@ def _render_growth(df):
     r[2].metric("네이버 ROAS", f"{nv_c*100:.0f}%", _delta_str(nv_c, nv_p),
                 help="네이버 매출 / (GFA+네이버SA)")
 
-    # ---- 인플루언서 · CRM 집행 달력 (현재+비교 기간 전체) ----
-    st.markdown("#### 인플루언서 · CRM 집행 일정")
-    cal_from, cal_to = p_from, c_to   # 비교 시작 ~ 현재 끝
-    cal = df[(df["date"] >= cal_from) & (df["date"] <= cal_to)].copy()
-    cal_map = {}
-    for _, row in cal.iterrows():
-        cal_map[row["date"]] = {"crm": row.get("crm_cost", 0) or 0,
-                                "influ": row.get("influ_cost", 0) or 0}
-    # 주 단위(월~일) 그리드 생성
-    import datetime as _dt
-    start_monday = cal_from - _dt.timedelta(days=cal_from.weekday())
-    end_sunday = cal_to + _dt.timedelta(days=(6 - cal_to.weekday()))
-    weeks = []
-    d = start_monday
-    while d <= end_sunday:
-        week = []
-        for _ in range(7):
-            week.append(d)
-            d += _dt.timedelta(days=1)
-        weeks.append(week)
-
-    st.caption("🟣 인플루언서　🟠 CRM　(집행일에 금액 표시, 현재 기간은 진하게)")
-    # HTML 표로 달력 렌더
-    dow = ["월", "화", "수", "목", "금", "토", "일"]
-    html = ['<table style="width:100%;border-collapse:collapse;text-align:center;font-size:12px;">']
-    html.append("<tr>" + "".join(f'<th style="padding:4px;color:#8A8F98;">{w}</th>' for w in dow) + "</tr>")
-    for week in weeks:
-        html.append("<tr>")
-        for day in week:
-            in_range = cal_from <= day <= cal_to
-            in_cur = c_from <= day <= c_to
-            info = cal_map.get(day, {})
-            crm = info.get("crm", 0); influ = info.get("influ", 0)
-            bg = "#FFFFFF" if in_cur else "#F7F8FA"
-            opacity = "1" if in_range else "0.35"
-            cell = f'<div style="font-weight:{"700" if in_cur else "400"};color:#23262B;">{day.day}</div>'
-            if influ > 0:
-                cell += f'<div style="color:#B060D0;font-size:10px;">🟣{_won_short(influ)}</div>'
-            if crm > 0:
-                cell += f'<div style="color:#E0A800;font-size:10px;">🟠{_won_short(crm)}</div>'
-            border = "2px solid #378ADD" if in_cur else "1px solid #EEF1F5"
-            html.append(f'<td style="border:{border};background:{bg};opacity:{opacity};'
-                        f'padding:4px;height:52px;vertical-align:top;">{cell}</td>')
-        html.append("</tr>")
-    html.append("</table>")
-    st.markdown("".join(html), unsafe_allow_html=True)
+    # ---- 인플루언서 · CRM 집행 타임라인 (현재+비교 기간, x축=날짜) ----
+    st.markdown("#### 인플루언서 · CRM 집행 타임라인")
+    tl_from, tl_to = p_from, c_to   # 비교 시작 ~ 현재 끝
+    tl = df[(df["date"] >= tl_from) & (df["date"] <= tl_to)].copy().sort_values("date")
+    xs = [d.strftime("%m/%d") for d in tl["date"]]
+    yt = [tl.iloc[i].get("influ_yt", 0) or 0 for i in range(len(tl))]
+    pa = [tl.iloc[i].get("influ_pa", 0) or 0 for i in range(len(tl))]
+    crm = [tl.iloc[i].get("crm_cost", 0) or 0 for i in range(len(tl))]
+    if not xs:
+        st.caption("선택 기간에 집행 데이터가 없어요.")
+    else:
+        figc = go.Figure()
+        figc.add_trace(go.Bar(x=xs, y=yt, name="인플루언서 YT", marker_color="#B060D0"))
+        figc.add_trace(go.Bar(x=xs, y=pa, name="인플루언서 PA", marker_color="#8E44AD"))
+        figc.add_trace(go.Bar(x=xs, y=crm, name="CRM", marker_color="#E0A800"))
+        figc.update_layout(barmode="stack", height=300, plot_bgcolor="white",
+                           margin=dict(t=10, b=10, l=10, r=10),
+                           yaxis=dict(title="집행 광고비", gridcolor="#EEF1F5", tickformat=","),
+                           xaxis=dict(title=None),
+                           legend=dict(orientation="h", y=1.15))
+        st.plotly_chart(figc, use_container_width=True, config={"displayModeBar": False})
+        # 집행 합계 요약
+        st.caption(f"기간 집행 합계 · 인플루언서 YT {_won_short(sum(yt))} · "
+                   f"인플루언서 PA {_won_short(sum(pa))} · CRM {_won_short(sum(crm))}")
     st.divider()
 
 
