@@ -25,6 +25,7 @@ DEFAULT_SHEET_URL = ("https://docs.google.com/spreadsheets/d/"
 # 채널 매출 열
 COL = {
     "dtc_sales": 14, "dtc_visit": 15, "dtc_new": 17, "dtc_return": 19,
+    "dtc_conv": 21,
     "dtc_first_ord": 33, "dtc_first_amt": 34, "dtc_re_ord": 36, "dtc_re_amt": 37,
     "dtc_re_rate": 39, "dtc_refund_amt": 40, "dtc_refund_rate": 41, "dtc_cvr": 42, "dtc_aov": 43,
     "ss_sales": 45, "ss_visit": 46, "ss_pay": 48, "ss_refund_amt": 51,
@@ -102,6 +103,26 @@ def _load(csv_url):
             rec["coupang_ad_sales"] = _num(raw.iloc[r, COUPANG_AD[1]]) if COUPANG_AD[1] < raw.shape[1] else 0.0
             rows.append(rec)
     return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=300)
+def _load_odit_daily():
+    """월별 파일의 odit_daily 를 {날짜: {인치그룹·색상: 수량}} 로."""
+    import os
+    import glob
+    import json
+    out = {}
+    for path in sorted(glob.glob(os.path.join("data", "monthly", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                md = json.load(f)
+        except Exception:
+            continue
+        for key, daymap in md.get("odit_daily", {}).items():
+            for dt, v in daymap.items():
+                q = v["q"] if isinstance(v, dict) else v
+                out.setdefault(dt, {})[key] = out.setdefault(dt, {}).get(key, 0) + q
+    return out
 
 
 def _won_short(n):
@@ -277,6 +298,132 @@ def _render_growth(df):
     st.divider()
 
 
+def _render_daily_checkin(df):
+    st.header("📋 자사몰 데일리 체크인")
+    valid = df[df["dtc_sales"] > 0]
+    if valid.empty:
+        st.info("실적 데이터가 없어요.")
+        return
+    dmin, dmax = df["date"].min(), valid["date"].max()
+    sel = st.date_input("확인할 일자", dmax, min_value=dmin, max_value=dmax, key="checkin_date")
+    if isinstance(sel, tuple):
+        sel = sel[0]
+
+    row_by_date = {r["date"]: r for _, r in df.iterrows()}
+
+    def val(d, col):
+        r = row_by_date.get(d)
+        if r is None:
+            return None
+        v = r.get(col)
+        return v if (v is not None and v != 0) else (0 if r is not None else None)
+
+    import datetime as _dt
+    d_prev = sel - _dt.timedelta(days=1)
+    d_wow = sel - _dt.timedelta(days=7)
+    d_mom = sel - _dt.timedelta(days=28)          # 4주 전(요일 정렬 유지)
+    try:
+        d_yoy = sel.replace(year=sel.year - 1)
+    except ValueError:
+        d_yoy = sel - _dt.timedelta(days=365)
+
+    def cmp_line(cur, comp):
+        if cur is None:
+            return "-"
+        if comp is None:
+            return "비교없음"
+        if comp == 0:
+            return "+∞" if cur > 0 else "0%"
+        p = (cur - comp) / comp * 100
+        return f"{'+' if p >= 0 else ''}{p:.0f}%"
+
+    # ---- 지표 5개 ----
+    metrics = [
+        ("매출", "dtc_sales", "won"), ("유입수", "dtc_visit", "num"),
+        ("전환", "dtc_conv", "num"), ("전환율", "dtc_cvr", "pct"),
+        ("객단가", "dtc_aov", "won"),
+    ]
+    st.caption(f"선택일: {sel}　·　전일 {d_prev}　·　WoW {d_wow}　·　MoM {d_mom}　·　YoY {d_yoy}")
+    for label, col, fmt in metrics:
+        cur = val(sel, col)
+
+        def show(v):
+            if v is None:
+                return "-"
+            if fmt == "won":
+                return _won_short(v)
+            if fmt == "pct":
+                return f"{v*100:.2f}%"
+            return f"{v:,.0f}"
+        cols = st.columns([1.4, 1, 1, 1, 1])
+        cols[0].markdown(f"**{label}**<br><span style='font-size:1.3rem;font-weight:700;'>{show(cur)}</span>",
+                         unsafe_allow_html=True)
+        for i, (name, d) in enumerate([("전일", d_prev), ("WoW", d_wow),
+                                       ("MoM", d_mom), ("YoY", d_yoy)]):
+            comp = val(d, col)
+            delta = cmp_line(cur, comp)
+            color = "#1D9E75" if delta.startswith("+") else ("#E5484D" if delta.startswith("-") else "#8A8F98")
+            cols[i + 1].markdown(
+                f"<div style='font-size:0.75rem;color:#8A8F98;'>{name}</div>"
+                f"<div style='font-size:0.8rem;'>{show(comp)}</div>"
+                f"<div style='color:{color};font-weight:600;'>{delta}</div>",
+                unsafe_allow_html=True)
+        st.markdown("<hr style='margin:6px 0;border:none;border-top:1px solid #F0F2F5;'>",
+                    unsafe_allow_html=True)
+
+    # ---- 오딧 SKU 표 ----
+    st.markdown("#### 오딧 캐리어 SKU 판매 (선택일)")
+    odit = _load_odit_daily()
+    INCH = ["20인치 플랩", "29인치", "26인치", "24인치", "20인치"]
+    COLORS = ["화이트", "실버", "다크그레이", "블랙", "솔티블루", "펄스레드", "아이시핑크", "웻그린"]
+
+    def qty(d, inch, color):
+        m = odit.get(d.isoformat() if hasattr(d, "isoformat") else d, {})
+        return m.get(f"{inch}·{color}", 0)
+
+    sel_s = sel.isoformat()
+    prev_s = d_prev.isoformat()
+    wow_s = d_wow.isoformat()
+    mom_s = d_mom.isoformat()
+    yoy_s = d_yoy.isoformat()
+    if sel_s not in odit:
+        st.caption("선택일에 오딧 SKU 판매 데이터가 없어요. (data/monthly 갱신 필요할 수 있어요)")
+
+    # HTML 표 (셀 마우스오버로 WoW/MoM/YoY)
+    html = ['<table style="border-collapse:collapse;font-size:12px;text-align:center;width:100%;">']
+    html.append('<tr><th style="padding:5px;border:1px solid #E7EBF0;background:#F7F8FA;"></th>'
+                + "".join(f'<th style="padding:5px;border:1px solid #E7EBF0;background:#F7F8FA;">{c}</th>'
+                          for c in COLORS) + "</tr>")
+    label_map = {"20인치 플랩": "플랩", "29인치": "29", "26인치": "26", "24인치": "24", "20인치": "20"}
+    for inch in INCH:
+        html.append(f'<tr><td style="padding:5px;border:1px solid #E7EBF0;background:#F7F8FA;'
+                    f'font-weight:600;">{label_map[inch]}</td>')
+        for color in COLORS:
+            cur_q = odit.get(sel_s, {}).get(f"{inch}·{color}", 0)
+            prev_q = odit.get(prev_s, {}).get(f"{inch}·{color}", 0)
+            wow_q = odit.get(wow_s, {}).get(f"{inch}·{color}", 0)
+            mom_q = odit.get(mom_s, {}).get(f"{inch}·{color}", 0)
+            yoy_q = odit.get(yoy_s, {}).get(f"{inch}·{color}", 0)
+            diff = cur_q - prev_q
+            arrow = ""
+            if diff > 0:
+                arrow = f'<span style="color:#1D9E75;">▲{diff}</span>'
+            elif diff < 0:
+                arrow = f'<span style="color:#E5484D;">▼{abs(diff)}</span>'
+            tip = f"전일 {prev_q} / WoW {wow_q} / MoM {mom_q} / YoY {yoy_q}"
+            cell = f'{cur_q}' if cur_q else '<span style="color:#C8CDD3;">·</span>'
+            if cur_q:
+                cell += f'<br>{arrow}' if arrow else ''
+            bg = "#FFFFFF" if cur_q else "#FBFBFC"
+            html.append(f'<td title="{tip}" style="padding:5px;border:1px solid #E7EBF0;'
+                        f'background:{bg};">{cell}</td>')
+        html.append("</tr>")
+    html.append("</table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+    st.caption("셀에 마우스를 올리면 전일·WoW·MoM·YoY 판매량이 보입니다. (숫자 아래 ▲▼는 전일 대비)")
+    st.divider()
+
+
 def render_mkt_tab():
     st.title("MKT 그로스 분석")
     st.caption("일별 마케팅 리포트(daily report) 기반 채널 매출·광고 효율 분석.")
@@ -311,6 +458,8 @@ def render_mkt_tab():
     # 0. 그로스 섹션 (최근 7일 vs 이전 7일) — 자체 계산, 필터 독립
     # =========================================================
     _render_growth(df)
+
+    _render_daily_checkin(df)
 
     dmin, dmax = df["date"].min(), df["date"].max()
     # 실제 매출이 있는 마지막 날 기준으로 기본 기간
