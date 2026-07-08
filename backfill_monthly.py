@@ -243,12 +243,11 @@ def iter_months(start_ym, end_ym):
 
 
 def build_page_daily(orders):
-    """248/270/184 페이지별 일자 집계 (주문 API 기반).
+    """248/270/184 페이지별 일자 집계 (주문 API · order_status 기준).
     {날짜: {페이지: {orders:주문수, q:순구매상품수, a:매출, cancel:취소수량}}}
-    - orders: 그 페이지 상품이 담긴 고유 주문 수(구매 고객 수)
-    - q: 순 구매 상품수 (수량 - 클레임)
-    - a: 매출
-    - cancel: 취소/클레임 수량
+    order_status 앞글자: N=정상, C=취소, R=반품, E=교환.
+    - 정상(N)·교환(E): 판매로 집계 (매출·수량·주문수)
+    - 취소(C)·반품(R): 취소 수량으로 집계 (매출·주문수엔 미포함)
     객단가는 화면에서 a / orders 로 계산.
     """
     PAGES = {"248", "270", "184"}
@@ -261,15 +260,17 @@ def build_page_daily(orders):
             if pno not in PAGES:
                 continue
             qty = int(to_amount(it.get("quantity")))
-            claim = int(to_amount(it.get("claim_quantity")))
-            net = qty - claim
+            status = str(it.get("order_status") or "")
+            head = status[:1].upper()
             price = to_amount(it.get("product_price")) + to_amount(it.get("option_price"))
             cell = tmp.setdefault((d, pno), {"order_ids": set(), "q": 0, "a": 0.0, "cancel": 0})
-            cell["cancel"] += claim
-            if net > 0:
-                cell["order_ids"].add(oid)
-                cell["q"] += net
-                cell["a"] += price * net
+            if head in ("C", "R"):          # 취소·반품
+                cell["cancel"] += qty
+            else:                           # 정상(N)·교환(E) = 판매
+                if qty > 0:
+                    cell["order_ids"].add(oid)
+                    cell["q"] += qty
+                    cell["a"] += price * qty
     page_daily = {}
     for (d, pno), v in tmp.items():
         page_daily.setdefault(d, {})[pno] = {
