@@ -35,15 +35,25 @@ def _odit_key(pname, opt):
     text = (pname or "") + " " + (opt or "")
     if "오딧" not in text or any(x in text for x in _EXCLUDE):
         return None
-    # 대괄호(배송/날짜 예: [3/20 예약배송])·소괄호(예: (5COLOR)) 먼저 제거 → 날짜 숫자 오염 방지
-    o = re.sub(r"\[.*?\]", "", opt or "")
-    o = re.sub(r"\(.*?\)", "", o)
-    o = o.replace("아이시 핑크", "아이시핑크")
+    # 캐리어 본품만 색상 집계에 포함 (커버·파우치 등 악세사리 제외)
+    if classify(pname or "", opt or "")[0] != "캐리어":
+        return None
+    # '커버'가 들어간 옵션/상품은 캐리어 색상 아님 (풀커버·패커블커버 사은품 등)
+    if "커버" in (opt or "") or "커버" in (pname or ""):
+        return None
+    # 대괄호(배송/날짜)·소괄호 제거
+    clean = re.sub(r"\[.*?\]", "", opt or "")
+    clean = re.sub(r"\(.*?\)", "", clean)
+    clean = clean.replace("아이시 핑크", "아이시핑크")
+    # '/'로 여러 상품이 붙은 세트: 첫 조각에 인치+색상이 둘 다 있으면(캐리어 완결)
+    # 그 조각만 사용해 뒤 상품(파우치 등) 색상 오염을 막는다. 아니면 전체 사용.
+    segs = [s.strip() for s in clean.split("/") if s.strip()]
+    first = segs[0] if segs else clean
+    _has_inch = re.search(r"(\d+)\s*인치", first)
+    _has_color = any(c in first for c in _ODIT_COLORS)
+    o = first if (_has_inch and _has_color) else clean
     p = pname or ""
     opt_inch = re.search(r"(\d+)\s*인치", o)
-    # 플랩 판별:
-    #  - 옵션에 '플랩' 있으면 플랩 (예: "플랩/솔티블루")
-    #  - 상품명에 '플랩'이고 옵션에 인치·'오딧'이 없으면 단독 플랩 상품(옵션=색상만)
     if "플랩" in o:
         flap = True
     elif "플랩" in p and not opt_inch and "오딧" not in o:

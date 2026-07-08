@@ -189,9 +189,19 @@ def build_product(client):
         text = (pname or "") + " " + (opt or "")
         if "오딧" not in text or any(x in text for x in _EXCLUDE):
             return None
-        o = _re.sub(r"\[.*?\]", "", opt or "")
-        o = _re.sub(r"\(.*?\)", "", o)
-        o = o.replace("아이시 핑크", "아이시핑크")
+        # 캐리어 본품만 색상 집계에 포함 (커버·파우치 등 악세사리 제외)
+        if classify(pname or "", opt or "")[0] != "캐리어":
+            return None
+        if "커버" in (opt or "") or "커버" in (pname or ""):
+            return None
+        clean = _re.sub(r"\[.*?\]", "", opt or "")
+        clean = _re.sub(r"\(.*?\)", "", clean)
+        clean = clean.replace("아이시 핑크", "아이시핑크")
+        segs = [s.strip() for s in clean.split("/") if s.strip()]
+        first = segs[0] if segs else clean
+        _has_inch = _re.search(r"(\d+)\s*인치", first)
+        _has_color = any(c in first for c in _ODIT_COLORS)
+        o = first if (_has_inch and _has_color) else clean
         p = pname or ""
         opt_inch = _re.search(r"(\d+)\s*인치", o)
         if "플랩" in o:
