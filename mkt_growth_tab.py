@@ -106,6 +106,28 @@ def _load(csv_url):
 
 
 @st.cache_data(ttl=300)
+def _load_page_daily():
+    """월별 파일의 page_daily 를 {날짜: {페이지: {q, a}}} 로."""
+    import os
+    import glob
+    import json
+    out = {}
+    for path in sorted(glob.glob(os.path.join("data", "monthly", "*.json"))):
+        try:
+            with open(path, encoding="utf-8") as f:
+                md = json.load(f)
+        except Exception:
+            continue
+        for dt, pages in md.get("page_daily", {}).items():
+            dst = out.setdefault(dt, {})
+            for pno, v in pages.items():
+                cell = dst.setdefault(pno, {"q": 0, "a": 0})
+                cell["q"] += v.get("q", 0)
+                cell["a"] += v.get("a", 0)
+    return out
+
+
+@st.cache_data(ttl=300)
 def _load_odit_daily():
     """월별 파일의 odit_daily 를 {날짜: {인치그룹·색상: 수량}} 로."""
     import os
@@ -424,6 +446,78 @@ def _render_daily_checkin(df):
     st.divider()
 
 
+def _render_page_cards():
+    st.header("🛍️ 오딧 상품 페이지별 판매")
+    page = _load_page_daily()
+    if not page:
+        st.info("페이지별 판매 데이터가 없어요. (backfill 재실행 필요할 수 있어요)")
+        st.divider()
+        return
+    PAGES = [("248", "오딧 캐리어 (일반)", "#378ADD"),
+             ("270", "오딧 플랩 (20인치)", "#B060D0"),
+             ("184", "세트할인", "#1D9E75")]
+    days = sorted(page.keys())
+    dmin = date.fromisoformat(days[0])
+    dmax = date.fromisoformat(days[-1])
+    sel = st.date_input("확인할 일자", dmax, min_value=dmin, max_value=dmax, key="page_date")
+    if isinstance(sel, tuple):
+        sel = sel[0]
+
+    import datetime as _dt
+    d_prev = sel - _dt.timedelta(days=1)
+    d_wow = sel - _dt.timedelta(days=7)
+    d_mom = sel - _dt.timedelta(days=28)
+    try:
+        d_yoy = sel.replace(year=sel.year - 1)
+    except ValueError:
+        d_yoy = sel - _dt.timedelta(days=365)
+
+    def get(d, pno):
+        return page.get(d.isoformat(), {}).get(pno, {"q": 0, "a": 0})
+
+    def cmp(cur, comp):
+        if comp == 0:
+            return ("+∞" if cur > 0 else "0%")
+        p = (cur - comp) / comp * 100
+        return f"{'+' if p >= 0 else ''}{p:.0f}%"
+
+    st.caption(f"선택일 {sel} · 전일 {d_prev} · WoW {d_wow} · MoM {d_mom} · YoY {d_yoy}")
+    cols = st.columns(len(PAGES))
+    for i, (pno, name, color) in enumerate(PAGES):
+        cur = get(sel, pno)
+        q = cur["q"]; a = cur["a"]
+        aov = round(a / q) if q else 0
+        # 비교 (전환수 기준 증감)
+        comps = []
+        for label, d in [("전일", d_prev), ("WoW", d_wow), ("MoM", d_mom), ("YoY", d_yoy)]:
+            cq = get(d, pno)["q"]
+            comps.append((label, cq, cmp(q, cq)))
+        rows_html = ""
+        for label, cq, delta in comps:
+            dc = "#1D9E75" if delta.startswith("+") else ("#E5484D" if delta.startswith("-") else "#8A8F98")
+            rows_html += (f'<tr><td style="color:#8A8F98;padding:2px 6px;">{label}</td>'
+                          f'<td style="text-align:right;padding:2px 6px;">{cq}개</td>'
+                          f'<td style="text-align:right;color:{dc};font-weight:600;padding:2px 6px;">{delta}</td></tr>')
+        card = f'''<div style="border:1px solid #E7EBF0;border-top:4px solid {color};
+            border-radius:12px;padding:16px;background:#fff;">
+            <div style="font-size:0.8rem;color:#8A8F98;">#{pno}</div>
+            <div style="font-size:1.05rem;font-weight:700;color:{color};margin-bottom:8px;">{name}</div>
+            <div style="display:flex;gap:14px;margin-bottom:10px;">
+              <div><div style="font-size:0.72rem;color:#8A8F98;">전환수</div>
+                   <div style="font-size:1.3rem;font-weight:700;">{q}</div></div>
+              <div><div style="font-size:0.72rem;color:#8A8F98;">매출</div>
+                   <div style="font-size:1.3rem;font-weight:700;">{_won_short(a)}</div></div>
+              <div><div style="font-size:0.72rem;color:#8A8F98;">객단가</div>
+                   <div style="font-size:1.3rem;font-weight:700;">{_won_short(aov)}</div></div>
+            </div>
+            <table style="width:100%;font-size:0.78rem;border-collapse:collapse;">{rows_html}</table>
+            <div style="font-size:0.68rem;color:#B8BCC2;margin-top:6px;">※ 증감은 전환수 기준</div>
+            </div>'''
+        cols[i].markdown(card, unsafe_allow_html=True)
+    st.caption("조회수·전환율은 접속 통계(mall.read_analytics) API 주소 확보 후 추가 예정이에요.")
+    st.divider()
+
+
 def render_mkt_tab():
     st.title("MKT 그로스 분석")
     st.caption("일별 마케팅 리포트(daily report) 기반 채널 매출·광고 효율 분석.")
@@ -460,6 +554,8 @@ def render_mkt_tab():
     _render_growth(df)
 
     _render_daily_checkin(df)
+
+    _render_page_cards()
 
     dmin, dmax = df["date"].min(), df["date"].max()
     # 실제 매출이 있는 마지막 날 기준으로 기본 기간

@@ -242,6 +242,36 @@ def iter_months(start_ym, end_ym):
             y += 1
 
 
+def build_page_daily(client, first, last):
+    """248/270/184 페이지별 일자 집계: {날짜: {페이지: {q:순수량, a:매출}}}.
+    매출 통계(salesvolume) 기반. 조회수·전환율은 접속 통계 API 확보 후 추가 예정.
+    실패해도 전체 backfill이 멈추지 않도록 예외를 삼킨다.
+    """
+    PAGES = ["248", "270", "184"]
+    page_daily = {}
+    for pno in PAGES:
+        try:
+            rows = client.get_salesvolume(pno, str(first), str(last))
+        except Exception as e:
+            print(f"    (페이지 {pno} 매출통계 수집 실패: {str(e)[:80]})")
+            continue
+        for r in rows:
+            d = r.get("collection_date")
+            if not d:
+                continue
+            settle = int(r.get("settle_count") or 0)
+            cancel = int(r.get("cancel_product_count") or 0)
+            ret = int(r.get("return_product_count") or 0)
+            price = float(r.get("product_price") or 0) + float(r.get("product_option_price") or 0)
+            net = settle - cancel - ret
+            cell = page_daily.setdefault(d, {}).setdefault(pno, {"q": 0, "a": 0.0})
+            cell["q"] += net
+            cell["a"] += price * net
+    # 반올림
+    return {d: {p: {"q": v["q"], "a": round(v["a"])} for p, v in pages.items()}
+            for d, pages in page_daily.items()}
+
+
 def backfill_one(client, ym):
     first, last = month_range(ym)
     today = date.today()
@@ -262,6 +292,8 @@ def backfill_one(client, ym):
     data["month"] = ym
     data["period"] = {"start": str(first), "end": str(last)}
     data["generated_at"] = now_kst()
+    print(f"  [{ym}] 페이지별 매출통계 수집 중...", flush=True)
+    data["page_daily"] = build_page_daily(client, first, last)
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, f"{ym}.json")
     with open(path, "w", encoding="utf-8") as f:

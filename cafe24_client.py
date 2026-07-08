@@ -200,6 +200,34 @@ class Cafe24Client:
                 time.sleep(0.5)  # rate limit 보호
         return all_orders
 
+    # ---------- 매출 통계 (reports/salesvolume) ----------
+    def get_salesvolume(self, product_no, start_date, end_date):
+        """
+        특정 상품(product_no)의 매출 통계를 기간 내 전부 수집.
+        반환: 시간대별 판매 기록 리스트 (collection_date, settle_count,
+              cancel_product_count, return_product_count, product_price,
+              product_option_price, total_sales 등)
+        - 30일 단위 청크 + offset 페이지네이션
+        """
+        rows = []
+        for chunk_start, chunk_end in _date_chunks(start_date, end_date, days=30):
+            offset = 0
+            while True:
+                data = self.get_json(
+                    "/api/v2/admin/reports/salesvolume",
+                    {"start_date": chunk_start, "end_date": chunk_end,
+                     "product_no": product_no, "limit": 1000, "offset": offset},
+                )
+                chunk = data.get("salesvolume", [])
+                rows.extend(chunk)
+                if len(chunk) < 1000:
+                    break
+                offset += 1000
+                if offset >= 10000:
+                    break
+                time.sleep(0.3)
+        return rows
+
 
 def _date_chunks(start, end, days=30):
     """'YYYY-MM-DD' 기간을 days 단위 구간 리스트로 분할."""
