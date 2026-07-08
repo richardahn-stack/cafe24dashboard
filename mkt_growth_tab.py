@@ -541,6 +541,65 @@ def _render_page_cards():
     st.divider()
 
 
+def _render_sales_ad_trend(df):
+    st.header("📈 채널별 매출 · 광고비 추이")
+    valid = df[df["dtc_sales"] > 0]
+    if valid.empty:
+        st.info("데이터가 없어요.")
+        return
+    dmin, dmax = df["date"].min(), valid["date"].max()
+    rng = st.date_input("기간", (dmax - timedelta(days=29), dmax),
+                        min_value=dmin, max_value=dmax, key="trend_range")
+    if isinstance(rng, tuple) and len(rng) == 2:
+        d_from, d_to = rng
+    else:
+        d_from = d_to = rng if not isinstance(rng, tuple) else dmax
+    view = df[(df["date"] >= d_from) & (df["date"] <= d_to)].copy().sort_values("date")
+    if view.empty:
+        st.caption("선택 기간에 데이터가 없어요.")
+        return
+    xs = [d.strftime("%m/%d") for d in view["date"]]
+
+    def col(c):
+        return list(view[c]) if c in view else [0] * len(view)
+
+    fig = go.Figure()
+    # ---- 매출 채널 (실선, 왼쪽 축 y) ----
+    sales_lines = [
+        ("자사몰", "dtc_sales", "#378ADD"), ("네이버", "ss_sales", "#3FA972"),
+        ("쿠팡", "coupang_sales", "#E0A800"), ("기타", "etc_sales", "#B8BCC2"),
+    ]
+    for name, c, color in sales_lines:
+        fig.add_trace(go.Scatter(x=xs, y=col(c), name=f"매출·{name}", yaxis="y",
+                                 mode="lines", line=dict(color=color, width=2)))
+    # ---- 광고비 채널 (점선, 오른쪽 축 y2) ----
+    ad_lines = [
+        ("메타", "ad_메타_cost", "#4267B2"), ("구글", "ad_구글_cost", "#EA4335"),
+        ("GFA", "ad_GFA_cost", "#03C75A"), ("인플 YT", "influ_yt", "#B060D0"),
+        ("인플 PA", "influ_pa", "#8E44AD"),
+    ]
+    for name, c, color in ad_lines:
+        fig.add_trace(go.Scatter(x=xs, y=col(c), name=f"광고비·{name}", yaxis="y2",
+                                 mode="lines", line=dict(color=color, width=1.5, dash="dot")))
+    # ---- CRM 발송일 점 (오른쪽 축, 마커만) ----
+    crm_x = [x for x, v in zip(xs, col("crm_cost")) if v and v > 0]
+    crm_y = [v for v in col("crm_cost") if v and v > 0]
+    if crm_x:
+        fig.add_trace(go.Scatter(x=crm_x, y=crm_y, name="CRM 발송", yaxis="y2",
+                                 mode="markers", marker=dict(color="#F0883E", size=11,
+                                                             symbol="diamond")))
+    fig.update_layout(
+        height=420, plot_bgcolor="white", margin=dict(t=10, b=10, l=10, r=10),
+        yaxis=dict(title="매출", gridcolor="#EEF1F5", tickformat=","),
+        yaxis2=dict(title="광고비", overlaying="y", side="right", showgrid=False, tickformat=","),
+        legend=dict(orientation="h", y=-0.18, font=dict(size=10)),
+        hovermode="x unified")
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.caption("실선=매출(왼쪽 축) · 점선=광고비(오른쪽 축) · 주황 다이아=CRM 발송일. "
+               "범례를 클릭하면 개별 선을 켜고 끌 수 있어요.")
+    st.divider()
+
+
 def render_mkt_tab():
     st.title("MKT 그로스 분석")
     st.caption("일별 마케팅 리포트(daily report) 기반 채널 매출·광고 효율 분석.")
@@ -579,6 +638,8 @@ def render_mkt_tab():
     _render_daily_checkin(df)
 
     _render_page_cards()
+
+    _render_sales_ad_trend(df)
 
     dmin, dmax = df["date"].min(), df["date"].max()
     # 실제 매출이 있는 마지막 날 기준으로 기본 기간
