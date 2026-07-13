@@ -88,6 +88,7 @@ def aggregate_month(orders):
     # 번들(함께구매) 일자별 집계
     from itertools import combinations
     bundle_daily = {}          # date -> {stat, pairs, carrier_with}
+    bundle_cat = {}            # date -> {single, set, combo, etc} (캐리어 수량 기준)
 
     for o in orders:
         if o.get("canceled") == "T":
@@ -152,6 +153,48 @@ def aggregate_month(orders):
                             sc["c"] += 1; sc["a"] += order_amt
                 else:
                     bd["single_amount"] += order_amt
+
+            # --- 신규: 캐리어 수량 기준 주문 분류 (단품/세트/기타 + 합구매 악세) ---
+            carrier_qty = 0
+            carrier_amt = 0.0
+            acc_amt = 0.0
+            for it in (o.get("items") or []):
+                net_i = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
+                if net_i <= 0:
+                    continue
+                pn_i = it.get("product_name", "")
+                opt_i = option_label(it)
+                amt_i = (to_amount(it.get("product_price"))
+                         + to_amount(it.get("option_price"))) * net_i
+                if classify(pn_i, opt_i)[0] == "캐리어":
+                    carrier_qty += net_i
+                    carrier_amt += amt_i
+                else:
+                    acc_amt += amt_i
+            full_amt = carrier_amt + acc_amt
+            if prod_names:
+                bc = bundle_cat.setdefault(d, {
+                    "single": {"orders": 0, "full": 0.0, "carrier": 0.0},
+                    "set": {"orders": 0, "full": 0.0, "carrier": 0.0},
+                    "combo": {"orders": 0, "acc": 0.0},
+                    "etc": {"orders": 0, "amt": 0.0}})
+                if carrier_qty == 0:
+                    bc["etc"]["orders"] += 1
+                    bc["etc"]["amt"] += full_amt
+                elif carrier_qty == 1:
+                    bc["single"]["orders"] += 1
+                    bc["single"]["full"] += full_amt
+                    bc["single"]["carrier"] += carrier_amt
+                    if acc_amt > 0:
+                        bc["combo"]["orders"] += 1
+                        bc["combo"]["acc"] += acc_amt
+                else:  # 캐리어 2개 이상 = 세트
+                    bc["set"]["orders"] += 1
+                    bc["set"]["full"] += full_amt
+                    bc["set"]["carrier"] += carrier_amt
+                    if acc_amt > 0:
+                        bc["combo"]["orders"] += 1
+                        bc["combo"]["acc"] += acc_amt
 
         for it in (o.get("items") or []):
             net = int(to_amount(it.get("quantity"))) - int(to_amount(it.get("claim_quantity")))
@@ -219,6 +262,20 @@ def aggregate_month(orders):
                 "set_color": {k: {"c": c["c"], "a": round(c["a"])}
                               for k, c in v.get("set_color", {}).items()},
             } for d, v in sorted(bundle_daily.items())
+        },
+        "bundle_cat_daily": {
+            d: {
+                "single": {"orders": v["single"]["orders"],
+                           "full": round(v["single"]["full"]),
+                           "carrier": round(v["single"]["carrier"])},
+                "set": {"orders": v["set"]["orders"],
+                        "full": round(v["set"]["full"]),
+                        "carrier": round(v["set"]["carrier"])},
+                "combo": {"orders": v["combo"]["orders"],
+                          "acc": round(v["combo"]["acc"])},
+                "etc": {"orders": v["etc"]["orders"],
+                        "amt": round(v["etc"]["amt"])},
+            } for d, v in sorted(bundle_cat.items())
         },
     }
 

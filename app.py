@@ -914,17 +914,107 @@ def render_product(orders):
         cstat, cpairs, ccw = agg_bundle(b_from, b_to)
         pstat, ppairs, pcw = agg_bundle(bp_from, bp_to)
 
-        # --- 3-0) 요약 지표 ---
+        # --- 3-0) 주문 유형별 요약: 전체 / 캐리어 단품 / 캐리어 세트 / 합구매 ---
+        def agg_bundle_cat(d_from, d_to):
+            acc = {"single": {"orders": 0, "full": 0, "carrier": 0},
+                   "set": {"orders": 0, "full": 0, "carrier": 0},
+                   "combo": {"orders": 0, "acc": 0},
+                   "etc": {"orders": 0, "amt": 0}}
+            for m, md in monthly.items():
+                for dt, v in md.get("bundle_cat_daily", {}).items():
+                    dd = date.fromisoformat(dt)
+                    if not (d_from <= dd <= d_to):
+                        continue
+                    for grp in ("single", "set"):
+                        acc[grp]["orders"] += v.get(grp, {}).get("orders", 0)
+                        acc[grp]["full"] += v.get(grp, {}).get("full", 0)
+                        acc[grp]["carrier"] += v.get(grp, {}).get("carrier", 0)
+                    acc["combo"]["orders"] += v.get("combo", {}).get("orders", 0)
+                    acc["combo"]["acc"] += v.get("combo", {}).get("acc", 0)
+                    acc["etc"]["orders"] += v.get("etc", {}).get("orders", 0)
+                    acc["etc"]["amt"] += v.get("etc", {}).get("amt", 0)
+            return acc
+
+        has_cat = any("bundle_cat_daily" in md for md in monthly.values())
+        if has_cat:
+            bcat = agg_bundle_cat(b_from, b_to)
+            single = bcat["single"]; sset = bcat["set"]
+            combo = bcat["combo"]; etc = bcat["etc"]
+            all_orders = single["orders"] + sset["orders"] + etc["orders"]
+            all_amt = single["full"] + sset["full"] + etc["amt"]
+            all_aov = round(all_amt / all_orders) if all_orders else 0
+            s_aov = round(single["full"] / single["orders"]) if single["orders"] else 0
+            set_aov = round(sset["full"] / sset["orders"]) if sset["orders"] else 0
+            combo_aov = round(combo["acc"] / combo["orders"]) if combo["orders"] else 0
+
+            cardinfo = [
+                ("전체 주문", all_orders, all_amt, all_aov, "#2B2F36", ""),
+                ("캐리어 단품", single["orders"], single["full"], s_aov, "#378ADD",
+                 "캐리어 1개 주문 (악세사리 포함)"),
+                ("캐리어 세트", sset["orders"], sset["full"], set_aov, "#1D9E75",
+                 "캐리어 2개+ 주문 (악세사리 포함)"),
+                ("합구매(악세사리)", combo["orders"], combo["acc"], combo_aov, "#E0A800",
+                 "캐리어와 함께 산 악세사리 (캐리어 매출 제외)"),
+            ]
+            ccols = st.columns(4)
+            for i, (name, orders, amt, aov, color, note) in enumerate(cardinfo):
+                ccols[i].markdown(
+                    f"""<div style="border:1px solid #E7EBF0;border-top:4px solid {color};
+                    border-radius:12px;padding:14px;background:#fff;">
+                    <div style="font-size:0.85rem;color:#5A5E66;font-weight:600;">{name}</div>
+                    <div style="font-size:1.4rem;font-weight:700;margin:4px 0;">{orders:,}건</div>
+                    <div style="font-size:0.9rem;">매출 <b>{won_short(amt)}</b></div>
+                    <div style="font-size:0.9rem;">객단가 <b>{won_short(aov)}</b></div>
+                    <div style="font-size:0.68rem;color:#B8BCC2;margin-top:6px;">{note}</div>
+                    </div>""",
+                    unsafe_allow_html=True)
+
+            # 파이: 매출 안 겹치게 4조각
+            st.markdown("**전체 매출 구성** (매출 중복 없이)")
+            pie_data = [
+                ("캐리어 단품(캐리어)", single["carrier"], "#378ADD"),
+                ("캐리어 세트(캐리어)", sset["carrier"], "#1D9E75"),
+                ("합구매 악세사리", combo["acc"], "#E0A800"),
+                ("기타(캐리어 외 주문)", etc["amt"], "#B8BCC2"),
+            ]
+            pie_data = [(n, v, c) for n, v, c in pie_data if v > 0]
+            pcol1, pcol2 = st.columns([1, 1.3])
+            with pcol1:
+                if pie_data:
+                    fig = px.pie(values=[v for _, v, _ in pie_data],
+                                 names=[n for n, _, _ in pie_data], hole=0.5,
+                                 color=[n for n, _, _ in pie_data],
+                                 color_discrete_map={n: c for n, _, c in pie_data})
+                    fig.update_traces(textinfo="percent+label")
+                    fig.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=10),
+                                      showlegend=False)
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            with pcol2:
+                st.markdown("**주문 유형 분포**")
+                dist = pd.DataFrame([
+                    {"유형": "캐리어 단품", "주문수": single["orders"], "매출": single["full"]},
+                    {"유형": "캐리어 세트", "주문수": sset["orders"], "매출": sset["full"]},
+                    {"유형": "기타(캐리어 외)", "주문수": etc["orders"], "매출": etc["amt"]},
+                ])
+                st.dataframe(dist.style.format({"주문수": "{:,}건", "매출": "₩{:,.0f}"}),
+                             hide_index=True, use_container_width=True)
+                if etc["orders"]:
+                    st.caption(f"※ 캐리어가 없는 주문(악세사리·프로모션만) {etc['orders']:,}건이 "
+                               f"'기타'로 분류됐어요 (매출 {won_short(etc['amt'])}).")
+            st.divider()
+
+        # --- (기존) 번들 정의별 요약 지표 ---
         tot = cstat["total"]; bo = cstat["bundle"]
         ratio = bo / tot * 100 if tot else 0
         single_cnt = tot - bo
         s_aov = round(cstat["single_amt"] / single_cnt) if single_cnt else 0
         b_aov = round(cstat["bundle_amt"] / bo) if bo else 0
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("전체 주문", f"{tot:,}건")
-        m2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
-        m3.metric("단품 객단가", won_short(s_aov))
-        m4.metric("번들 객단가", won_short(b_aov), f"+{won_short(b_aov - s_aov)}")
+        with st.expander("번들 정의별 요약 (상품 종류 ≥2 기준)"):
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("전체 주문", f"{tot:,}건")
+            m2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
+            m3.metric("단품 객단가", won_short(s_aov))
+            m4.metric("번들 객단가", won_short(b_aov), f"+{won_short(b_aov - s_aov)}")
 
         # --- 3-1) 합구매 조합: 파이 + 표 (건수/매출 비중, 전기간 비교) ---
         st.markdown("#### 합구매 조합")
