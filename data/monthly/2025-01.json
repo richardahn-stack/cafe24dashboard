@@ -9703,11 +9703,633 @@
       "set_color": {}
     }
   },
+  "bundle_cat_daily": {
+    "2025-01-01": {
+      "single": {
+        "orders": 63,
+        "full": 18947200,
+        "carrier": 18010000
+      },
+      "set": {
+        "orders": 21,
+        "full": 11912600,
+        "carrier": 11770000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 1079800
+      },
+      "etc": {
+        "orders": 19,
+        "amt": 988500
+      }
+    },
+    "2025-01-02": {
+      "single": {
+        "orders": 61,
+        "full": 18375700,
+        "carrier": 17505000
+      },
+      "set": {
+        "orders": 19,
+        "full": 10429600,
+        "carrier": 10220000
+      },
+      "combo": {
+        "orders": 16,
+        "acc": 1080300
+      },
+      "etc": {
+        "orders": 19,
+        "amt": 990400
+      }
+    },
+    "2025-01-03": {
+      "single": {
+        "orders": 57,
+        "full": 17103800,
+        "carrier": 16350000
+      },
+      "set": {
+        "orders": 16,
+        "full": 9146700,
+        "carrier": 8835000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 1065500
+      },
+      "etc": {
+        "orders": 10,
+        "amt": 426000
+      }
+    },
+    "2025-01-04": {
+      "single": {
+        "orders": 53,
+        "full": 15353400,
+        "carrier": 14430000
+      },
+      "set": {
+        "orders": 12,
+        "full": 6864800,
+        "carrier": 6785000
+      },
+      "combo": {
+        "orders": 13,
+        "acc": 1003200
+      },
+      "etc": {
+        "orders": 11,
+        "amt": 673100
+      }
+    },
+    "2025-01-05": {
+      "single": {
+        "orders": 55,
+        "full": 16373400,
+        "carrier": 15950000
+      },
+      "set": {
+        "orders": 27,
+        "full": 15272500,
+        "carrier": 15005000
+      },
+      "combo": {
+        "orders": 13,
+        "acc": 690900
+      },
+      "etc": {
+        "orders": 13,
+        "amt": 609900
+      }
+    },
+    "2025-01-06": {
+      "single": {
+        "orders": 67,
+        "full": 19618800,
+        "carrier": 18835000
+      },
+      "set": {
+        "orders": 23,
+        "full": 14777200,
+        "carrier": 14215000
+      },
+      "combo": {
+        "orders": 21,
+        "acc": 1346000
+      },
+      "etc": {
+        "orders": 14,
+        "amt": 701100
+      }
+    },
+    "2025-01-07": {
+      "single": {
+        "orders": 65,
+        "full": 18542800,
+        "carrier": 18020000
+      },
+      "set": {
+        "orders": 23,
+        "full": 13127600,
+        "carrier": 12820000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 830400
+      },
+      "etc": {
+        "orders": 8,
+        "amt": 467300
+      }
+    },
+    "2025-01-08": {
+      "single": {
+        "orders": 64,
+        "full": 18693900,
+        "carrier": 17915000
+      },
+      "set": {
+        "orders": 14,
+        "full": 8712300,
+        "carrier": 8300000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 1191200
+      },
+      "etc": {
+        "orders": 12,
+        "amt": 842500
+      }
+    },
+    "2025-01-09": {
+      "single": {
+        "orders": 53,
+        "full": 15918700,
+        "carrier": 15000000
+      },
+      "set": {
+        "orders": 11,
+        "full": 6201300,
+        "carrier": 6107500
+      },
+      "combo": {
+        "orders": 13,
+        "acc": 1012500
+      },
+      "etc": {
+        "orders": 12,
+        "amt": 583300
+      }
+    },
+    "2025-01-10": {
+      "single": {
+        "orders": 57,
+        "full": 16919800,
+        "carrier": 16115000
+      },
+      "set": {
+        "orders": 19,
+        "full": 11053400,
+        "carrier": 10297500
+      },
+      "combo": {
+        "orders": 19,
+        "acc": 1560700
+      },
+      "etc": {
+        "orders": 8,
+        "amt": 481250
+      }
+    },
+    "2025-01-11": {
+      "single": {
+        "orders": 51,
+        "full": 15062500,
+        "carrier": 14340000
+      },
+      "set": {
+        "orders": 20,
+        "full": 11224800,
+        "carrier": 11075000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 872300
+      },
+      "etc": {
+        "orders": 21,
+        "amt": 1184400
+      }
+    },
+    "2025-01-12": {
+      "single": {
+        "orders": 61,
+        "full": 17904000,
+        "carrier": 17395000
+      },
+      "set": {
+        "orders": 26,
+        "full": 15560200,
+        "carrier": 15025000
+      },
+      "combo": {
+        "orders": 12,
+        "acc": 1044200
+      },
+      "etc": {
+        "orders": 17,
+        "amt": 953500
+      }
+    },
+    "2025-01-13": {
+      "single": {
+        "orders": 68,
+        "full": 19994900,
+        "carrier": 19210000
+      },
+      "set": {
+        "orders": 22,
+        "full": 12578600,
+        "carrier": 12380000
+      },
+      "combo": {
+        "orders": 18,
+        "acc": 983500
+      },
+      "etc": {
+        "orders": 42,
+        "amt": 4046200
+      }
+    },
+    "2025-01-14": {
+      "single": {
+        "orders": 84,
+        "full": 24541700,
+        "carrier": 23570000
+      },
+      "set": {
+        "orders": 23,
+        "full": 13598000,
+        "carrier": 13080000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 1489700
+      },
+      "etc": {
+        "orders": 58,
+        "amt": 5307500
+      }
+    },
+    "2025-01-15": {
+      "single": {
+        "orders": 64,
+        "full": 19662600,
+        "carrier": 18355000
+      },
+      "set": {
+        "orders": 18,
+        "full": 11186600,
+        "carrier": 10305000
+      },
+      "combo": {
+        "orders": 23,
+        "acc": 2189200
+      },
+      "etc": {
+        "orders": 58,
+        "amt": 5779500
+      }
+    },
+    "2025-01-16": {
+      "single": {
+        "orders": 92,
+        "full": 26545800,
+        "carrier": 25282500
+      },
+      "set": {
+        "orders": 15,
+        "full": 8434900,
+        "carrier": 8355000
+      },
+      "combo": {
+        "orders": 21,
+        "acc": 1343200
+      },
+      "etc": {
+        "orders": 47,
+        "amt": 4944800
+      }
+    },
+    "2025-01-17": {
+      "single": {
+        "orders": 82,
+        "full": 23609900,
+        "carrier": 22520000
+      },
+      "set": {
+        "orders": 17,
+        "full": 9542600,
+        "carrier": 9170000
+      },
+      "combo": {
+        "orders": 21,
+        "acc": 1462500
+      },
+      "etc": {
+        "orders": 39,
+        "amt": 3947400
+      }
+    },
+    "2025-01-18": {
+      "single": {
+        "orders": 73,
+        "full": 20926400,
+        "carrier": 20160000
+      },
+      "set": {
+        "orders": 17,
+        "full": 9539700,
+        "carrier": 9390000
+      },
+      "combo": {
+        "orders": 13,
+        "acc": 916100
+      },
+      "etc": {
+        "orders": 42,
+        "amt": 3903300
+      }
+    },
+    "2025-01-19": {
+      "single": {
+        "orders": 95,
+        "full": 28137500,
+        "carrier": 26985000
+      },
+      "set": {
+        "orders": 29,
+        "full": 17234700,
+        "carrier": 16660000
+      },
+      "combo": {
+        "orders": 20,
+        "acc": 1727200
+      },
+      "etc": {
+        "orders": 64,
+        "amt": 6036400
+      }
+    },
+    "2025-01-20": {
+      "single": {
+        "orders": 88,
+        "full": 25567200,
+        "carrier": 24692500
+      },
+      "set": {
+        "orders": 17,
+        "full": 10535000,
+        "carrier": 10535000
+      },
+      "combo": {
+        "orders": 14,
+        "acc": 874700
+      },
+      "etc": {
+        "orders": 71,
+        "amt": 6125600
+      }
+    },
+    "2025-01-21": {
+      "single": {
+        "orders": 81,
+        "full": 24505100,
+        "carrier": 22895000
+      },
+      "set": {
+        "orders": 16,
+        "full": 9813600,
+        "carrier": 9645000
+      },
+      "combo": {
+        "orders": 21,
+        "acc": 1778700
+      },
+      "etc": {
+        "orders": 74,
+        "amt": 6100400
+      }
+    },
+    "2025-01-22": {
+      "single": {
+        "orders": 60,
+        "full": 17230600,
+        "carrier": 16770000
+      },
+      "set": {
+        "orders": 13,
+        "full": 7927100,
+        "carrier": 7195000
+      },
+      "combo": {
+        "orders": 12,
+        "acc": 1192700
+      },
+      "etc": {
+        "orders": 86,
+        "amt": 6253250
+      }
+    },
+    "2025-01-23": {
+      "single": {
+        "orders": 47,
+        "full": 13830700,
+        "carrier": 13485000
+      },
+      "set": {
+        "orders": 12,
+        "full": 6393000,
+        "carrier": 6215000
+      },
+      "combo": {
+        "orders": 6,
+        "acc": 523700
+      },
+      "etc": {
+        "orders": 54,
+        "amt": 3373100
+      }
+    },
+    "2025-01-24": {
+      "single": {
+        "orders": 52,
+        "full": 14356500,
+        "carrier": 13745000
+      },
+      "set": {
+        "orders": 16,
+        "full": 8066600,
+        "carrier": 7520000
+      },
+      "combo": {
+        "orders": 10,
+        "acc": 1158100
+      },
+      "etc": {
+        "orders": 40,
+        "amt": 3009300
+      }
+    },
+    "2025-01-25": {
+      "single": {
+        "orders": 37,
+        "full": 10080200,
+        "carrier": 9600000
+      },
+      "set": {
+        "orders": 9,
+        "full": 4465000,
+        "carrier": 4465000
+      },
+      "combo": {
+        "orders": 5,
+        "acc": 480200
+      },
+      "etc": {
+        "orders": 42,
+        "amt": 3329800
+      }
+    },
+    "2025-01-26": {
+      "single": {
+        "orders": 31,
+        "full": 8861600,
+        "carrier": 8300000
+      },
+      "set": {
+        "orders": 15,
+        "full": 7601400,
+        "carrier": 7195000
+      },
+      "combo": {
+        "orders": 7,
+        "acc": 968000
+      },
+      "etc": {
+        "orders": 31,
+        "amt": 2399600
+      }
+    },
+    "2025-01-27": {
+      "single": {
+        "orders": 46,
+        "full": 11574100,
+        "carrier": 10840000
+      },
+      "set": {
+        "orders": 11,
+        "full": 5073900,
+        "carrier": 4925000
+      },
+      "combo": {
+        "orders": 11,
+        "acc": 883000
+      },
+      "etc": {
+        "orders": 31,
+        "amt": 2158100
+      }
+    },
+    "2025-01-28": {
+      "single": {
+        "orders": 31,
+        "full": 8166500,
+        "carrier": 7675000
+      },
+      "set": {
+        "orders": 12,
+        "full": 6403700,
+        "carrier": 6180000
+      },
+      "combo": {
+        "orders": 10,
+        "acc": 715200
+      },
+      "etc": {
+        "orders": 25,
+        "amt": 1714200
+      }
+    },
+    "2025-01-29": {
+      "single": {
+        "orders": 40,
+        "full": 11864000,
+        "carrier": 11060000
+      },
+      "set": {
+        "orders": 10,
+        "full": 6057700,
+        "carrier": 5865000
+      },
+      "combo": {
+        "orders": 10,
+        "acc": 996700
+      },
+      "etc": {
+        "orders": 34,
+        "amt": 2613800
+      }
+    },
+    "2025-01-30": {
+      "single": {
+        "orders": 58,
+        "full": 17441500,
+        "carrier": 16465000
+      },
+      "set": {
+        "orders": 17,
+        "full": 9777700,
+        "carrier": 9560000
+      },
+      "combo": {
+        "orders": 15,
+        "acc": 1194200
+      },
+      "etc": {
+        "orders": 37,
+        "amt": 3673600
+      }
+    },
+    "2025-01-31": {
+      "single": {
+        "orders": 64,
+        "full": 17726800,
+        "carrier": 17220000
+      },
+      "set": {
+        "orders": 23,
+        "full": 12528600,
+        "carrier": 12290000
+      },
+      "combo": {
+        "orders": 12,
+        "acc": 745400
+      },
+      "etc": {
+        "orders": 40,
+        "amt": 3399400
+      }
+    }
+  },
   "month": "2025-01",
   "period": {
     "start": "2025-01-01",
     "end": "2025-01-31"
   },
-  "generated_at": "2026-07-08T19:35:21+09:00",
+  "generated_at": "2026-07-13T19:22:06+09:00",
   "page_daily": {}
 }
