@@ -49,6 +49,17 @@ def won_short(n):
     return f"₩{round(n):,}"
 
 
+def won_aov(n):
+    """객단가용: 만원 단위 소수 첫째자리(천원)까지. 예: 345,000 → ₩34.5만"""
+    try:
+        n = float(n)
+    except Exception:
+        return "-"
+    if n >= 1e4:
+        return f"₩{n/1e4:.1f}만"
+    return f"₩{round(n):,}"
+
+
 def option_label(it):
     opts = it.get("options")
     if isinstance(opts, list) and opts:
@@ -618,7 +629,7 @@ def render_product(orders):
                 　<span style="color:{color};">{sign}{won_short(delta)}</span></div>
                 <hr style="border:none;border-top:1px solid #F0F2F5;margin:10px 0;">
                 <div style="font-size:0.9rem;">판매량 <b>{q:,}개</b></div>
-                <div style="font-size:0.9rem;">객단가 <b>{won_short(aov)}</b></div>
+                <div style="font-size:0.9rem;">객단가 <b>{won_aov(aov)}</b></div>
                 </div>""",
                 unsafe_allow_html=True)
 
@@ -938,6 +949,7 @@ def render_product(orders):
         has_cat = any("bundle_cat_daily" in md for md in monthly.values())
         if has_cat:
             bcat = agg_bundle_cat(b_from, b_to)
+            pcat = agg_bundle_cat(bp_from, bp_to)      # 비교 기간
             single = bcat["single"]; sset = bcat["set"]
             combo = bcat["combo"]; etc = bcat["etc"]
             all_orders = single["orders"] + sset["orders"] + etc["orders"]
@@ -947,24 +959,48 @@ def render_product(orders):
             set_aov = round(sset["full"] / sset["orders"]) if sset["orders"] else 0
             combo_aov = round(combo["acc"] / combo["orders"]) if combo["orders"] else 0
 
+            # 비교 기간 값
+            p_single = pcat["single"]; p_set = pcat["set"]
+            p_combo = pcat["combo"]; p_etc = pcat["etc"]
+            p_all_orders = p_single["orders"] + p_set["orders"] + p_etc["orders"]
+            p_all_amt = p_single["full"] + p_set["full"] + p_etc["amt"]
+            p_all_aov = round(p_all_amt / p_all_orders) if p_all_orders else 0
+            p_s_aov = round(p_single["full"] / p_single["orders"]) if p_single["orders"] else 0
+            p_set_aov = round(p_set["full"] / p_set["orders"]) if p_set["orders"] else 0
+            p_combo_aov = round(p_combo["acc"] / p_combo["orders"]) if p_combo["orders"] else 0
+
+            def d_cnt(cur, prev):   # 건수 증감
+                diff = cur - prev
+                c = "#1D9E75" if diff >= 0 else "#E5484D"
+                return f'<span style="color:{c};font-size:0.8rem;">({"+" if diff>=0 else ""}{diff:,}건)</span>'
+
+            def d_won(cur, prev, aov=False):   # 금액 증감
+                diff = cur - prev
+                c = "#1D9E75" if diff >= 0 else "#E5484D"
+                s = won_aov(abs(diff)) if aov else won_short(abs(diff))
+                s = s.replace("₩", "")
+                return f'<span style="color:{c};font-size:0.8rem;">({"+" if diff>=0 else "-"}{s})</span>'
+
+            # (name, 현재주문, 현재매출, 현재객단가, color, note, 이전주문, 이전매출, 이전객단가)
             cardinfo = [
-                ("전체 주문", all_orders, all_amt, all_aov, "#2B2F36", ""),
+                ("전체 주문", all_orders, all_amt, all_aov, "#2B2F36", "",
+                 p_all_orders, p_all_amt, p_all_aov),
                 ("캐리어 단품", single["orders"], single["full"], s_aov, "#378ADD",
-                 "캐리어 1개 주문 (악세사리 포함)"),
+                 "캐리어 1개 주문 (악세사리 포함)", p_single["orders"], p_single["full"], p_s_aov),
                 ("캐리어 세트", sset["orders"], sset["full"], set_aov, "#1D9E75",
-                 "캐리어 2개+ 주문 (악세사리 포함)"),
+                 "캐리어 2개+ 주문 (악세사리 포함)", p_set["orders"], p_set["full"], p_set_aov),
                 ("합구매(악세사리)", combo["orders"], combo["acc"], combo_aov, "#E0A800",
-                 "캐리어와 함께 산 악세사리 (캐리어 매출 제외)"),
+                 "캐리어와 함께 산 악세사리 (캐리어 매출 제외)", p_combo["orders"], p_combo["acc"], p_combo_aov),
             ]
             ccols = st.columns(4)
-            for i, (name, orders, amt, aov, color, note) in enumerate(cardinfo):
+            for i, (name, orders, amt, aov, color, note, p_o, p_a, p_v) in enumerate(cardinfo):
                 ccols[i].markdown(
                     f"""<div style="border:1px solid #E7EBF0;border-top:4px solid {color};
                     border-radius:12px;padding:14px;background:#fff;">
                     <div style="font-size:0.85rem;color:#5A5E66;font-weight:600;">{name}</div>
-                    <div style="font-size:1.4rem;font-weight:700;margin:4px 0;">{orders:,}건</div>
-                    <div style="font-size:0.9rem;">매출 <b>{won_short(amt)}</b></div>
-                    <div style="font-size:0.9rem;">객단가 <b>{won_short(aov)}</b></div>
+                    <div style="font-size:1.4rem;font-weight:700;margin:4px 0;">{orders:,}건 {d_cnt(orders, p_o)}</div>
+                    <div style="font-size:0.9rem;">매출 <b>{won_short(amt)}</b> {d_won(amt, p_a)}</div>
+                    <div style="font-size:0.9rem;">객단가 <b>{won_aov(aov)}</b> {d_won(aov, p_v, aov=True)}</div>
                     <div style="font-size:0.68rem;color:#B8BCC2;margin-top:6px;">{note}</div>
                     </div>""",
                     unsafe_allow_html=True)
@@ -1013,8 +1049,8 @@ def render_product(orders):
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("전체 주문", f"{tot:,}건")
             m2.metric("번들 주문", f"{bo:,}건", f"{ratio:.1f}%")
-            m3.metric("단품 객단가", won_short(s_aov))
-            m4.metric("번들 객단가", won_short(b_aov), f"+{won_short(b_aov - s_aov)}")
+            m3.metric("단품 객단가", won_aov(s_aov))
+            m4.metric("번들 객단가", won_aov(b_aov), f"+{won_aov(b_aov - s_aov)}")
 
         # --- 3-1) 합구매 조합: 파이 + 표 (건수/매출 비중, 전기간 비교) ---
         st.markdown("#### 합구매 조합")
