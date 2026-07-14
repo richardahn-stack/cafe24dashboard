@@ -350,6 +350,11 @@ def _render_daily_checkin(df):
         r = row_by_date.get(d)
         if r is None:
             return None
+        # 전환율은 시트 값 대신 전환수/유입수로 직접 계산
+        if col == "dtc_cvr":
+            conv = r.get("dtc_conv") or 0
+            visit = r.get("dtc_visit") or 0
+            return (conv / visit) if visit else 0
         v = r.get(col)
         return v if (v is not None and v != 0) else (0 if r is not None else None)
 
