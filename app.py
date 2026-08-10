@@ -14,6 +14,7 @@ import streamlit as st
 from cafe24_client import Cafe24Client
 from classify import classify
 from mkt_growth_tab import render_mkt_tab
+from naver_tab import render_naver_section
 
 st.set_page_config(page_title="자사몰 그로스 대시보드", layout="wide")
 
@@ -1193,6 +1194,9 @@ def render_product(orders):
             else:
                 sel_label = f"{pick_inch if pick_inch!='전체' else ''} {pick_color if pick_color!='전체' else ''}".strip() or "선택 조건"
                 st.caption(f"'{sel_label}' 캐리어와 함께 산 다른 캐리어가 이 기간엔 없어요.")
+
+    # ===== 네이버 스마트스토어 판매량 (엑셀 업로드 기반) =====
+    render_naver_section()
 
 
 
