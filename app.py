@@ -275,6 +275,14 @@ with st.sidebar:
         load_data_json.clear()   # 캐시 비우고 최신 JSON 다시 읽기
         st.rerun()
 
+    # 최근 데이터 갱신 시각 (sales.json 기준 — 모든 데이터 동일 시점)
+    try:
+        _gen = load_data_json("sales.json").get("generated_at", "")
+        if _gen:
+            st.caption("🕒 최근 갱신: " + _gen[:16].replace("T", " ") + " (KST)")
+    except Exception:
+        pass
+
 orders = None  # 모든 탭이 data/*.json을 읽음 (카페24 토큰 불필요)
 
 
