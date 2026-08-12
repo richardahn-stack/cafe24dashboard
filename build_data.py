@@ -22,6 +22,11 @@ def now_kst():
     """한국 시간(KST) 기준 현재 시각 문자열."""
     return datetime.now(KST).isoformat(timespec="seconds")
 
+
+def today_kst():
+    """한국 시간(KST) 기준 오늘 날짜. (Actions는 UTC라 date.today()를 쓰면 안 됨)"""
+    return datetime.now(KST).date()
+
 OUT_DIR = "data"
 PERIOD_DAYS = 90  # 분석 기간 (일). 직전 동일 기간과 비교. 날짜 필터 비교용으로 넉넉히 확보.
 
@@ -123,7 +128,7 @@ def pct_delta(cur, prev):
 
 
 def build_sales(client):
-    today = date.today()
+    today = today_kst()
     cur_start = today - timedelta(days=PERIOD_DAYS - 1)
     prev_end = cur_start - timedelta(days=1)
     prev_start = prev_end - timedelta(days=PERIOD_DAYS - 1)
@@ -168,7 +173,7 @@ def write_json(name, data):
 # ---------- 상품 집계 ----------
 def build_product(client):
     """주문 기준 상품/옵션 판매 + 카테고리 분류 (조회·전환은 CSV라 제외)."""
-    today = date.today()
+    today = today_kst()
     start = today - timedelta(days=PERIOD_DAYS - 1)
     orders = client.get_orders(str(start), str(today))
 
@@ -329,7 +334,7 @@ def build_product(client):
 # ---------- 재고 집계 ----------
 def build_inventory(client):
     """전체 품목 재고 + 판매속도(7/30/90일) + 품절예측/부진."""
-    today = date.today()
+    today = today_kst()
     orders90 = client.get_orders(str(today - timedelta(days=89)), str(today))
 
     def window_qty(days):
@@ -429,7 +434,7 @@ def build_current_month(client):
     from datetime import date
     # backfill_monthly의 집계·저장 로직 재사용
     from backfill_monthly import backfill_one
-    today = date.today()
+    today = today_kst()
     ym = f"{today.year:04d}-{today.month:02d}"
     print(f"이번 달 월별 데이터 갱신 중... ({ym})")
     try:

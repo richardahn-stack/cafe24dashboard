@@ -23,7 +23,7 @@ from datetime import date, datetime
 
 from cafe24_client import Cafe24Client
 from classify import classify
-from build_data import to_amount, order_day, option_label, now_kst
+from build_data import to_amount, order_day, option_label, now_kst, today_kst
 
 OUT_DIR = "data/monthly"
 _ODIT_COLORS = ["화이트", "실버", "다크그레이", "블랙", "솔티블루",
@@ -341,7 +341,7 @@ def build_page_daily(orders):
 
 def backfill_one(client, ym):
     first, last = month_range(ym)
-    today = date.today()
+    today = today_kst()
     # 미래 달의 끝날은 오늘까지만
     if last > today:
         last = today
@@ -373,7 +373,7 @@ def backfill_one(client, ym):
 
 def main():
     args = sys.argv[1:]
-    today = date.today()
+    today = today_kst()
     if len(args) == 0:
         start_ym = f"{today.year}-01"
         end_ym = f"{today.year}-{today.month:02d}"
