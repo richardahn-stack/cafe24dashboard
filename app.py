@@ -250,7 +250,8 @@ with st.sidebar:
     st.divider()
 
     # ── 데이터 새로고침: GitHub Actions 원격 실행 ──
-    st.caption("데이터는 매일 자동 갱신돼요. 지금 바로 최신화하려면 아래 버튼을 누르세요.")
+    st.caption("데이터는 매일 새벽 자동 갱신돼요. 지금 바로 최신화하려면 아래 버튼을 누르세요. "
+               "(한 번만 누르고 '진행 상태 확인'으로 확인하세요)")
     if st.button("🔄 지금 데이터 새로고침", use_container_width=True):
         gh = st.secrets.get("GITHUB_TOKEN", "")
         repo = st.secrets.get("GITHUB_REPO", "richardahn-stack/cafe24dashboard")
@@ -264,12 +265,55 @@ with st.sidebar:
                              "Accept": "application/vnd.github+json"},
                     json={"ref": "main"}, timeout=20)
                 if r.status_code == 204:
-                    st.success("새로고침 요청 완료! 약 2~3분 뒤 데이터가 갱신돼요. "
-                               "잠시 후 페이지를 새로고침하세요.")
+                    st.session_state["refresh_requested"] = True
+                    st.success("✅ 새로고침을 요청했어요. 약 2~3분 걸려요. "
+                               "아래 '진행 상태 확인'으로 확인하세요. (여러 번 누르지 마세요)")
                 else:
                     st.error(f"요청 실패 ({r.status_code}). 토큰 권한(workflow)을 확인하세요.")
             except Exception as e:
                 st.error(f"요청 중 오류: {e}")
+
+    # 진행 상태 확인 (GitHub Actions 최신 실행 조회)
+    if st.button("🔍 진행 상태 확인", use_container_width=True):
+        gh = st.secrets.get("GITHUB_TOKEN", "")
+        repo = st.secrets.get("GITHUB_REPO", "richardahn-stack/cafe24dashboard")
+        if not gh:
+            st.error("GitHub 토큰이 설정되지 않았어요.")
+        else:
+            try:
+                rr = requests.get(
+                    f"https://api.github.com/repos/{repo}/actions/workflows/build.yml/runs?per_page=1",
+                    headers={"Authorization": f"Bearer {gh}",
+                             "Accept": "application/vnd.github+json"}, timeout=20)
+                runs = rr.json().get("workflow_runs", []) if rr.status_code == 200 else []
+                if not runs:
+                    st.info("최근 실행 기록이 없어요.")
+                else:
+                    run = runs[0]
+                    status = run.get("status")          # queued / in_progress / completed
+                    concl = run.get("conclusion")       # success / failure / cancelled ...
+                    # 실행 시각을 KST로
+                    created = run.get("created_at", "")
+                    try:
+                        from datetime import datetime, timezone, timedelta
+                        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                        kst = dt.astimezone(timezone(timedelta(hours=9)))
+                        tstr = kst.strftime("%m/%d %H:%M")
+                    except Exception:
+                        tstr = created[:16]
+                    if status in ("queued", "in_progress"):
+                        st.info(f"⏳ 데이터 갱신 중이에요... (시작 {tstr}) 잠시 후 다시 확인해 주세요.")
+                    elif status == "completed" and concl == "success":
+                        st.success(f"✅ 갱신 완료! ({tstr}) 아래 '화면 다시 읽기'를 눌러 최신 데이터를 보세요.")
+                    elif status == "completed" and concl == "failure":
+                        st.error(f"❌ 갱신 실패 ({tstr}). 토큰 문제일 수 있어요. 관리자에게 알려주세요.")
+                    elif status == "completed" and concl == "cancelled":
+                        st.warning(f"⚠️ 취소됨 ({tstr}). 중복 실행으로 취소됐을 수 있어요. "
+                                   "다시 새로고침을 한 번 눌러보세요.")
+                    else:
+                        st.info(f"상태: {status} / {concl} ({tstr})")
+            except Exception as e:
+                st.error(f"상태 확인 중 오류: {e}")
 
     if st.button("↻ 화면 다시 읽기", use_container_width=True):
         load_data_json.clear()   # 캐시 비우고 최신 JSON 다시 읽기
