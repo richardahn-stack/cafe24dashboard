@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-13T08:58:45+09:00",
+  "generated_at": "2026-08-13T09:15:51+09:00",
   "summary": {
     "total": 2543,
     "products_ok": 248,
@@ -7484,17 +7484,17 @@
       "product_no": 288,
       "product": "[추가할인] 트래블 월렛",
       "option": "블랙",
-      "stock": 205,
+      "stock": 204,
       "safety": 0,
       "daily_1": 0,
       "daily_7": 0.86,
-      "daily_30": 1.47,
-      "daily_90": 1.67,
+      "daily_30": 1.5,
+      "daily_90": 1.68,
       "sellout_1": null,
-      "sellout_7": 238,
-      "sellout_30": 139,
-      "sellout_90": 123,
-      "sellout_days": 139,
+      "sellout_7": 237,
+      "sellout_30": 136,
+      "sellout_90": 121,
+      "sellout_days": 136,
       "selling": true
     },
     {
