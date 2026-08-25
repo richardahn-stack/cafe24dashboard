@@ -90,6 +90,27 @@ def aggregate_month(orders):
     bundle_daily = {}          # date -> {stat, pairs, carrier_with}
     bundle_cat = {}            # date -> {single, set, combo, etc} (캐리어 수량 기준)
 
+    # 일자별 총매출·환불·순매출 (order_status 기준: N/E=판매, C/R=환불)
+    # ※ 취소 주문도 포함해 집계해야 하므로 별도 루프 (아래 메인 루프는 취소 skip).
+    sales_daily = {}           # date -> {"gross":.., "refund":.., "net":..}
+    for o in orders:
+        d = order_day(o)
+        if not d:
+            continue
+        cell = sales_daily.setdefault(d, {"gross": 0.0, "refund": 0.0, "net": 0.0})
+        for it in (o.get("items") or []):
+            qty = int(to_amount(it.get("quantity")))
+            if qty <= 0:
+                continue
+            amt = (to_amount(it.get("product_price"))
+                   + to_amount(it.get("option_price"))) * qty
+            head = str(it.get("order_status") or "")[:1].upper()
+            cell["gross"] += amt                 # 총매출 (취소·반품 포함 전체)
+            if head in ("C", "R"):
+                cell["refund"] += amt            # 환불 (취소·반품)
+            else:
+                cell["net"] += amt               # 순매출 (정상·교환)
+
     for o in orders:
         if o.get("canceled") == "T":
             continue
@@ -276,6 +297,11 @@ def aggregate_month(orders):
                 "etc": {"orders": v["etc"]["orders"],
                         "amt": round(v["etc"]["amt"])},
             } for d, v in sorted(bundle_cat.items())
+        },
+        "sales_daily": {
+            d: {"gross": round(v["gross"]), "refund": round(v["refund"]),
+                "net": round(v["net"])}
+            for d, v in sorted(sales_daily.items())
         },
     }
 

@@ -358,10 +358,16 @@ def render_sales(orders):
                     "29인치": "#E5484D", "20인치 플랩": "#3FA972"}
         daily_amt = {}                       # 'YYYY-MM-DD' -> 총매출
         daily_inch = {}                      # 'YYYY-MM-DD' -> {인치: 수량}
+        daily_sales = {}                     # 'YYYY-MM-DD' -> {gross, refund, net}
         for m, md in monthly.items():
             for dt, cats in md.get("cat_daily", {}).items():
                 s = sum((c["a"] if isinstance(c, dict) else c) for c in cats.values())
                 daily_amt[dt] = daily_amt.get(dt, 0) + s
+            for dt, v in md.get("sales_daily", {}).items():
+                cell = daily_sales.setdefault(dt, {"gross": 0, "refund": 0, "net": 0})
+                cell["gross"] += v.get("gross", 0)
+                cell["refund"] += v.get("refund", 0)
+                cell["net"] += v.get("net", 0)
             for key, daymap in md.get("odit_daily", {}).items():
                 grp = key.split("·")[0]
                 if grp not in ODIT_INCH:
@@ -379,11 +385,11 @@ def render_sales(orders):
             # --- 기간 필터 + 집계 단위 ---
             fc1, fc2 = st.columns([2, 1])
             with fc1:
-                rng = st.date_input("기간", (dmin, dmax), min_value=dmin,
-                                    max_value=dmax, key="trend_range")
+                rng = st.date_input("기간", (max(dmin, dmax - timedelta(days=13)), dmax),
+                                    min_value=dmin, max_value=dmax, key="trend_range")
             with fc2:
                 unit = st.radio("단위", ["일", "주", "월"], horizontal=True,
-                                index=2, key="trend_unit")
+                                index=0, key="trend_unit")
             if isinstance(rng, tuple) and len(rng) == 2:
                 d_from, d_to = rng
             else:
@@ -410,6 +416,20 @@ def render_sales(orders):
                     inch_b.setdefault(b, {}).setdefault(g, 0)
                     inch_b[b][g] += q
             buckets = sorted(amt_b.keys())
+
+            # 선택 기간 매출/환불/순매출 요약 (sales_daily 기준, 원단위)
+            g_sum = r_sum = n_sum = 0
+            for dt in all_days:
+                dd = date.fromisoformat(dt)
+                if d_from <= dd <= d_to and dt in daily_sales:
+                    g_sum += daily_sales[dt]["gross"]
+                    r_sum += daily_sales[dt]["refund"]
+                    n_sum += daily_sales[dt]["net"]
+            sc = st.columns(3)
+            sc[0].metric("총매출", won(g_sum))
+            sc[1].metric("환불", won(r_sum))
+            sc[2].metric("순매출 (총-환불)", won(n_sum))
+            st.caption(f"{d_from} ~ {d_to} 기준 · 총매출은 취소·반품 포함, 순매출은 제외")
 
             if not buckets:
                 st.caption("선택한 기간에 데이터가 없어요.")
@@ -487,7 +507,7 @@ def render_sales(orders):
     # 1) 상단 KPI 6개 (카드)
     k = d["kpi"]
     cards = [
-        ("총 매출", won_short(k["total_sales"]), ""),
+        ("총 매출", won(k["total_sales"]), ""),
         ("전환수", f'{k["conv_count"]:,}건', ""),
         ("평균 객단가", won(k["aov"]), ""),
         ("유입수", f"{유입수:,}" if 유입수 is not None else "—", "· CSV"),
