@@ -364,7 +364,8 @@ def render_sales(orders):
                 s = sum((c["a"] if isinstance(c, dict) else c) for c in cats.values())
                 daily_amt[dt] = daily_amt.get(dt, 0) + s
             for dt, v in md.get("sales_daily", {}).items():
-                cell = daily_sales.setdefault(dt, {"gross": 0, "refund": 0, "net": 0})
+                cell = daily_sales.setdefault(dt, {"orders": 0, "gross": 0, "refund": 0, "net": 0})
+                cell["orders"] += v.get("orders", 0)
                 cell["gross"] += v.get("gross", 0)
                 cell["refund"] += v.get("refund", 0)
                 cell["net"] += v.get("net", 0)
@@ -448,7 +449,23 @@ def render_sales(orders):
                 st.plotly_chart(figm, use_container_width=True,
                                 config={"displayModeBar": False})
 
-                # 2) 오딧 인치별 판매량 — 누적 막대
+                # 1-2) 일자별 매출 테이블 (주문수·매출·환불·순매출)
+                trows = []
+                for dt in all_days:
+                    dd = date.fromisoformat(dt)
+                    if d_from <= dd <= d_to and dt in daily_sales:
+                        v = daily_sales[dt]
+                        trows.append({"일자": dt, "주문수": v["orders"],
+                                      "매출": v["gross"], "환불": v["refund"],
+                                      "순매출": v["net"]})
+                if trows:
+                    tdf = pd.DataFrame(trows).sort_values("일자", ascending=False)
+                    st.dataframe(
+                        tdf.style.format({"주문수": "{:,}건", "매출": "₩{:,.0f}",
+                                          "환불": "₩{:,.0f}", "순매출": "₩{:,.0f}"}),
+                        hide_index=True, use_container_width=True)
+
+
                 figi = go.Figure()
                 for g in ODIT_INCH:
                     figi.add_trace(go.Bar(

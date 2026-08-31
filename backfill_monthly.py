@@ -92,12 +92,14 @@ def aggregate_month(orders):
 
     # 일자별 총매출·환불·순매출 (order_status 기준: N/E=판매, C/R=환불)
     # ※ 취소 주문도 포함해 집계해야 하므로 별도 루프 (아래 메인 루프는 취소 skip).
-    sales_daily = {}           # date -> {"gross":.., "refund":.., "net":..}
+    sales_daily = {}           # date -> {"orders":.., "gross":.., "refund":.., "net":..}
     for o in orders:
         d = order_day(o)
         if not d:
             continue
-        cell = sales_daily.setdefault(d, {"gross": 0.0, "refund": 0.0, "net": 0.0})
+        cell = sales_daily.setdefault(d, {"orders": set(), "gross": 0.0,
+                                          "refund": 0.0, "net": 0.0})
+        cell["orders"].add(o.get("order_id"))
         for it in (o.get("items") or []):
             qty = int(to_amount(it.get("quantity")))
             if qty <= 0:
@@ -299,8 +301,8 @@ def aggregate_month(orders):
             } for d, v in sorted(bundle_cat.items())
         },
         "sales_daily": {
-            d: {"gross": round(v["gross"]), "refund": round(v["refund"]),
-                "net": round(v["net"])}
+            d: {"orders": len(v["orders"]), "gross": round(v["gross"]),
+                "refund": round(v["refund"]), "net": round(v["net"])}
             for d, v in sorted(sales_daily.items())
         },
     }
