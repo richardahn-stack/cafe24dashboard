@@ -157,9 +157,10 @@ class Cafe24Client:
         return data.get("variants", [])
 
     # ---------- 주문 수집 ----------
-    def get_orders(self, start_date, end_date):
+    def get_orders(self, start_date, end_date, date_type=None):
         """
         지정 기간의 주문을 전부 수집합니다.
+        - date_type: None(기본=주문일) 또는 'cancel_date'(취소일 기준) 등
         - 날짜는 30일 단위로 청크 분할 (API 기간 제한 대응)
         - 각 청크는 offset 페이지네이션 (limit 최대 500)
         - embed=items 로 주문 상품 항목까지 함께 조회
@@ -175,6 +176,8 @@ class Cafe24Client:
                     "offset": offset,
                     "embed": "items",
                 }
+                if date_type:
+                    params["date_type"] = date_type
                 resp = requests.get(
                     f"{API_BASE}/api/v2/admin/orders",
                     headers=self._headers(),

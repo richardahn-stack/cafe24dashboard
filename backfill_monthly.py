@@ -367,6 +367,30 @@ def build_page_daily(orders):
     return page_daily
 
 
+def build_refund_daily(client, first, last):
+    """취소일(cancel_date) 기준 환불 집계 → {날짜: 환불액(실결제)}.
+    카페24 '환불 합계'와 일치: date_type=cancel_date 로 조회, 환불액 = initial.payment - actual.payment.
+    """
+    refund_daily = {}
+    try:
+        cxo = client.get_orders(str(first), str(last), date_type="cancel_date")
+    except Exception as e:
+        print(f"    (취소일 기준 환불 조회 실패: {str(e)[:80]})")
+        return refund_daily
+    for o in cxo:
+        if o.get("canceled") != "T":
+            continue
+        cdate = str(o.get("cancel_date") or "")[:10]
+        if not cdate:
+            continue
+        ip = to_amount((o.get("initial_order_amount") or {}).get("payment_amount"))
+        ap = to_amount((o.get("actual_order_amount") or {}).get("payment_amount"))
+        refund = ip - ap
+        if refund != 0:
+            refund_daily[cdate] = refund_daily.get(cdate, 0.0) + refund
+    return {d: round(v) for d, v in refund_daily.items()}
+
+
 def backfill_one(client, ym):
     first, last = month_range(ym)
     today = today_kst()
@@ -388,6 +412,19 @@ def backfill_one(client, ym):
     data["period"] = {"start": str(first), "end": str(last)}
     data["generated_at"] = now_kst()
     data["page_daily"] = build_page_daily(orders)
+    # 환불을 취소일(cancel_date) 기준 실결제액으로 교체 (카페24 '환불 합계'와 일치)
+    print(f"  [{ym}] 취소일 기준 환불 집계 중...", flush=True)
+    refund_daily = build_refund_daily(client, first, last)
+    for dt, cell in data.get("sales_daily", {}).items():
+        # gross(주문일 기준 총매출)는 유지, refund만 취소일 기준으로, net = gross - refund
+        cell["refund"] = refund_daily.get(dt, 0)
+    # 취소일이 이 달인데 sales_daily에 해당 날짜가 없던 경우도 추가
+    for dt, amt in refund_daily.items():
+        if dt not in data["sales_daily"]:
+            data["sales_daily"][dt] = {"orders": 0, "gross": 0, "refund": amt, "net": -amt}
+    # net 재계산 (순매출 = 총매출 - 환불)
+    for dt, cell in data["sales_daily"].items():
+        cell["net"] = cell.get("gross", 0) - cell.get("refund", 0)
     os.makedirs(OUT_DIR, exist_ok=True)
     path = os.path.join(OUT_DIR, f"{ym}.json")
     with open(path, "w", encoding="utf-8") as f:
