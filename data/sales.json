@@ -1,32 +1,27 @@
 {
-  "generated_at": "2026-09-05T04:34:27+09:00",
+  "generated_at": "2026-09-06T04:04:05+09:00",
   "period": {
-    "start": "2026-06-08",
-    "end": "2026-09-05",
+    "start": "2026-06-09",
+    "end": "2026-09-06",
     "days": 90
   },
   "kpi": {
-    "total_sales": 3786407961,
-    "conv_count": 10113,
-    "aov": 374410,
+    "total_sales": 3782401801,
+    "conv_count": 10091,
+    "aov": 374829,
     "refund_rate": 0.1
   },
   "new_vs_repeat": {
-    "new_sales": 2966164850,
-    "repeat_sales": 820243111,
-    "new_delta_pct": 30.6,
-    "repeat_delta_pct": 11.7,
+    "new_sales": 2964186750,
+    "repeat_sales": 818215051,
+    "new_delta_pct": 31.5,
+    "repeat_delta_pct": 12.5,
     "prev_period": {
-      "start": "2026-03-10",
-      "end": "2026-06-07"
+      "start": "2026-03-11",
+      "end": "2026-06-08"
     }
   },
   "daily": [
-    {
-      "date": "2026-06-08",
-      "new": 17998900,
-      "repeat": 5314000
-    },
     {
       "date": "2026-06-09",
       "new": 35371600,
@@ -469,8 +464,13 @@
     },
     {
       "date": "2026-09-05",
-      "new": 1083500,
-      "repeat": 35000
+      "new": 17104300,
+      "repeat": 2970940
+    },
+    {
+      "date": "2026-09-06",
+      "new": 0,
+      "repeat": 350000
     }
   ]
 }
